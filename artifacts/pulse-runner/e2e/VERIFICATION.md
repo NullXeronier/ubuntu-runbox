@@ -11,11 +11,16 @@ retains reports and runtime logs on failure. The evidence gate has isolated
 unit tests for complete reports, omissions, skipped/failed cases, missing
 attachments, retries and global failures.
 
-**The Linux workflow has not been executed yet.** No GitHub repository/runner
-connection is currently authorized in this workspace. Connecting the intended
-repository and dispatching the workflow is still required before any
-Firefox/WebKit pass can be claimed. The files are runner configuration, not
-new passing browser evidence.
+**The Linux workflow has not been executed yet.** The user connected GitHub
+and supplied a repository, now configured as `origin`. The connection reports
+healthy authorization with repository/workflow scopes, but the actual
+authenticated `git ls-remote --symref origin HEAD` request is rejected with
+`Invalid username or token`; the GitHub CLI also reports no authentication.
+Retrying after confirming the connection binding did not resolve access.
+No test branch was pushed, workflow dispatched, default branch changed, or
+deployment performed. Repository authentication must work before dispatch and
+before any Firefox/WebKit pass can be claimed. These files are runner
+configuration, not new passing browser evidence.
 
 The default configuration now invokes the same four journeys in 12 projects
 (48 cases): Chromium, Firefox and WebKit, each with keyboard/375px trusted-touch
