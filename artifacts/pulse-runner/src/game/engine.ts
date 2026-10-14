@@ -143,6 +143,10 @@ export class RhythmGame {
         if (document.hidden) this.pause();
       });
       window.addEventListener("blur", () => this.pause());
+      window.addEventListener("storage", (event) => {
+        this.missions.handleStorage(event);
+        this.update({});
+      });
     }
   }
 

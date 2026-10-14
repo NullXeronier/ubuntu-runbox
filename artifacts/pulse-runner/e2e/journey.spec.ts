@@ -526,3 +526,4 @@ test('storage faults: effects save failure warns but applies for the session wit
   await expect(page.getByTestId('badge-complete-first-run')).toHaveText('DONE');
   await checkRenderer(page, info, 'unsaved-effects-reload', true);
 });
+

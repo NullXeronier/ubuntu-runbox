@@ -96,13 +96,17 @@ export async function attachStorageEvidence(page: Page, info: TestInfo, label: s
 }
 
 export const test = base.extend<{ guard: void }>({
-  guard: [async ({ page }, use, info) => {
+  guard: [async ({ page, context }, use, info) => {
     const errors: string[] = [];
-    page.on('pageerror', (error) => errors.push(error.message));
-    page.on('console', (message) => {
-      if (message.type() === 'error') errors.push(message.text());
-    });
-    await page.addInitScript(() => {
+    const watch = (target: Page) => {
+      target.on('pageerror', (error) => errors.push(error.stack ?? error.message));
+      target.on('console', (message) => {
+        if (message.type() === 'error') errors.push(message.text());
+      });
+    };
+    watch(page);
+    context.on('page', watch);
+    await context.addInitScript(() => {
       const probe = window.__pulseProbe = {
         contexts: [] as DrawRecord[],
         audio: [] as AudioContext[],
@@ -216,6 +220,9 @@ export async function checkRenderer(page: Page, info: TestInfo, label: string, c
  * The separate startup test uses the untouched native audio clock.
  */
 export async function openClockedGame(page: Page, info: TestInfo) {
+  // Each cross-tab tracker needs a visible page while its renderer is proven:
+  // Chromium throttles requestAnimationFrame in background tabs.
+  await page.bringToFront();
   await page.clock.install();
   await page.addInitScript(() => {
     const descriptor = Object.getOwnPropertyDescriptor(AudioContext.prototype, 'currentTime') ??
@@ -236,7 +243,9 @@ export async function openClockedGame(page: Page, info: TestInfo) {
   });
   await page.goto('./');
   await expect(page.getByTestId('button-start')).toBeVisible();
-  await checkRenderer(page, info, 'startup');
+  // A prior page in the same context may already have paused its virtual clock.
+  // Advance this page while confirming the first real renderer frame.
+  await checkRenderer(page, info, 'startup', true);
   // Animation scheduling is not the feature under test. Keep UI stable while
   // time is paused without changing the game's reduced-effects preference.
   await page.addStyleTag({ content: '*,*::before,*::after{animation:none!important;transition:none!important}' });

@@ -80,6 +80,47 @@ test("four missions have the agreed targets and no initial completion", () => {
   assert.equal(storage.writes, 0);
 });
 
+test("stale trackers merge before saving without crediting external badges to this run", () => {
+  const a = new MissionTracker(storage);
+  const b = new MissionTracker(storage);
+  a.advance(stats({ maxCombo: 20 }));
+  b.advance(stats({ finished: true }));
+  assert.deepEqual(new Set(JSON.parse(storage.getItem("pulse-missions")!).completed), new Set(["combo-20", "first-run"]));
+  assert.equal(b.getSnapshot()[1]!.completedThisRun, false);
+  assert.equal(b.getSnapshot()[0]!.completedThisRun, true);
+});
+
+test("racing events repair the saved union without echo writes or false new flags", () => {
+  const a = new MissionTracker(storage);
+  a.advance(stats({ maxCombo: 20 }));
+  const external = JSON.stringify({ version: 1, completed: ["first-run"] });
+  storage.values.set("pulse-missions", external);
+  const event = { key: "pulse-missions", newValue: external, storageArea: storage as unknown as Storage };
+  a.handleStorage(event);
+  assert.equal(a.getSnapshot()[0]!.completed, true);
+  assert.equal(a.getSnapshot()[0]!.completedThisRun, false);
+  assert.equal(a.getSnapshot()[1]!.completedThisRun, true);
+  assert.deepEqual(new Set(JSON.parse(storage.getItem("pulse-missions")!).completed), new Set(["combo-20", "first-run"]));
+  const writes = storage.writes;
+  a.handleStorage(event);
+  assert.equal(storage.writes, writes);
+  a.handleStorage({ ...event, newValue: '{"version":1,"completed":["perfect-40","unknown"]}' });
+  assert.equal(a.getSnapshot()[2]!.completed, false);
+});
+
+test("denied reconciliation writes retain session badges and the saved external badge", () => {
+  const tracker = new MissionTracker(storage);
+  storage.failWrite = true;
+  tracker.advance(stats({ maxCombo: 20 }));
+  const raw = JSON.stringify({ version: 1, completed: ["first-run"] });
+  storage.values.set("pulse-missions", raw);
+  tracker.handleStorage({ key: "pulse-missions", newValue: raw, storageArea: storage as unknown as Storage });
+  assert.equal(tracker.getSnapshot()[0]!.completedThisRun, false);
+  assert.equal(tracker.getSnapshot()[1]!.completed, true);
+  assert.match(tracker.getError()!, /cannot be saved/);
+  assert.equal(storage.getItem("pulse-missions"), raw);
+});
+
 test("thresholds use actual stats, clamp values, and complete each badge once", () => {
   const tracker = new MissionTracker(storage);
   tracker.advance(stats({ maxCombo: 19, perfect: 39, score: 99999 }));
