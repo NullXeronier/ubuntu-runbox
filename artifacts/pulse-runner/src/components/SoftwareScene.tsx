@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { game } from '@/game/engine';
 import { TUNNEL_RADIUS as R, LANE_STEP as STEP, laneAngle as laneA, CAMERA_Y as camY, CAMERA_Z as camZ, CAMERA_FOV, CAMERA_PITCH, projectionScale } from './tunnel-layout';
+import { warpTunnelPoint, warpTarget } from './tunnel-warp';
 
 const COLORS = ['#ff2e9a', '#ffd23f', '#22e6ff', '#7dff5a'];
 const SPEED = 16;
@@ -26,6 +27,8 @@ export function SoftwareScene() {
     resize();
     window.addEventListener('resize', resize);
     const out = [0, 0, 0];
+    const wp = { x: 0, y: 0, z: 0 };
+    let wsm = 0;
 
     const frame = (now: number) => {
       id = requestAnimationFrame(frame);
@@ -50,7 +53,13 @@ export function SoftwareScene() {
       const f = projectionScale(h, CAMERA_FOV + (reduced ? 0 : fresh * 4 + combo01 * 5));
       const cx = w / 2, cy = h / 2;
       const pitchCos = Math.cos(-CAMERA_PITCH), pitchSin = Math.sin(-CAMERA_PITCH);
+      const tw = warpTarget(reduced, active, pulse, combo01, fresh);
+      if (reduced) wsm = 0;
+      else if (snap.phase !== 'paused') wsm += (tw - wsm) * Math.min(1, dt * 3);
+      const ws = wsm < 0.001 ? 0 : wsm;
       const P = (x: number, y: number, z: number) => {
+        warpTunnelPoint(x, y, z, dist, ws, wp);
+        x = wp.x; y = wp.y;
         const dy = y - camY, dz = camZ - z;
         const d = dz * pitchCos - dy * pitchSin;
         if (d <= 0.2) return false;
@@ -63,7 +72,9 @@ export function SoftwareScene() {
       ctx.globalAlpha = 1; ctx.fillStyle = '#070514'; ctx.fillRect(0, 0, w, h);
       // vanishing core
       const cr = Math.max(w, h) * (0.35 + pulse * 0.03);
-      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
+      let gx = cx, gy = cy;
+      if (P(0, 0, -75)) { gx = out[0]; gy = out[1]; }
+      const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, cr);
       g.addColorStop(0, col + (combo01 > 0.5 ? '66' : '44')); g.addColorStop(1, 'transparent');
       ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
 
@@ -113,21 +124,39 @@ export function SoftwareScene() {
         }
         ctx.stroke();
       }
+      // rails, sampled along depth so they bend with the tube
+      ctx.strokeStyle = '#ff2e9a'; ctx.lineWidth = 1; ctx.globalAlpha = 0.18 + pulse * 0.2;
+      ctx.beginPath();
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2 + (reduced ? 0 : dist * 0.012);
+        let started = false;
+        for (let j = 0; j <= 16; j++) {
+          if (!P(Math.cos(a) * (R + 0.1), Math.sin(a) * (R + 0.1), 2 - j * 5)) { started = false; continue; }
+          if (started) ctx.lineTo(out[0], out[1]); else { ctx.moveTo(out[0], out[1]); started = true; }
+        }
+      }
+      ctx.stroke();
       ctx.globalAlpha = 1;
       // lanes (arc strips, near and far edges)
       const zf = -80, zn = 3;
       for (let l = 0; l < 4; l++) {
         const a = laneA(l), lit = snap.lastLane === l && active && snap.lastJudge !== 'MISS' ? Math.max(0, 1 - sinceHit * 3.5) : 0;
         const pts: number[] = [];
-        const corners: [number, number][] = [[a + 0.15, zf], [a - 0.15, zf], [a - 0.15, zn], [a + 0.15, zn]];
         let ok = true;
-        for (const [aa, z] of corners) {
-          if (!P(Math.sin(aa) * R, -Math.cos(aa) * R, z)) { ok = false; break; }
-          pts.push(out[0], out[1]);
+        const N = 14;
+        for (let e = 0; e < 2 && ok; e++) {
+          const aa = e === 0 ? a + 0.15 : a - 0.15;
+          for (let j = 0; j <= N; j++) {
+            const z = e === 0 ? zf + ((zn - zf) * j) / N : zn - ((zn - zf) * j) / N;
+            if (!P(Math.sin(aa) * R, -Math.cos(aa) * R, z)) { ok = false; break; }
+            pts.push(out[0], out[1]);
+          }
         }
         if (!ok) continue;
         ctx.globalAlpha = 0.16 + lit * 0.14 + pulse * 0.05; ctx.fillStyle = COLORS[l];
-        ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); ctx.lineTo(pts[2], pts[3]); ctx.lineTo(pts[4], pts[5]); ctx.lineTo(pts[6], pts[7]); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(pts[0], pts[1]);
+        for (let q = 2; q < pts.length; q += 2) ctx.lineTo(pts[q], pts[q + 1]);
+        ctx.fill();
         // hit pad
         ctx.globalAlpha = 0.15 + lit * 0.8;
         const q: number[] = [];

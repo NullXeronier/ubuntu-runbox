@@ -9,10 +9,10 @@ export const CAMERA_FOV = 72;
 export const CAMERA_PITCH = -0.06;
 export const laneAngle = (lane: number) => (lane - 1.5) * LANE_STEP;
 
-export function laneStripGeometry(lane: number, length: number, radius: number, width: number) {
+export function laneStripGeometry(lane: number, length: number, radius: number, width: number, heightSegments = 1) {
   // A +PI/2 rotation around X maps CylinderGeometry's (sin(a), y, cos(a))
   // into the same bottom arc (sin(a), -cos(a), z) occupied by notes.
-  return new CylinderGeometry(radius, radius, length, 6, 1, true, laneAngle(lane) - width / 2, width);
+  return new CylinderGeometry(radius, radius, length, 6, heightSegments, true, laneAngle(lane) - width / 2, width);
 }
 
 export function projectionScale(height: number, fov = CAMERA_FOV) {

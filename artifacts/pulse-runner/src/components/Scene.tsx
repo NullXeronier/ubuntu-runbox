@@ -3,6 +3,16 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { game } from '@/game/engine';
 import { TUNNEL_RADIUS as R, LANE_STEP, laneAngle, laneStripGeometry, CAMERA_Y, CAMERA_Z, CAMERA_FOV, CAMERA_PITCH } from './tunnel-layout';
+import { warpTunnelPoint, warpSliceMatrix, warpPositions, warpTarget } from './tunnel-warp';
+
+const RAIL_N = 18, RAIL_S = 40;
+const WALL_Z = -35;
+const warpOut = { x: 0, y: 0, z: 0 };
+const m0 = [0, 0, 0, 0, 0, 0], m1 = [0, 0, 0, 0, 0, 0];
+const worldGeo = (g: THREE.BufferGeometry) => {
+  g.rotateX(Math.PI / 2); g.translate(0, 0, WALL_Z);
+  return Float32Array.from(g.attributes.position.array as ArrayLike<number>);
+};
 
 export const LANE_COLORS = ['#ff2e9a', '#ffd23f', '#22e6ff', '#7dff5a'];
 const SPEED = 16;
@@ -29,6 +39,7 @@ function World() {
   const trackId = useRef('');
   const tcol = useRef(new THREE.Color('#22e6ff'));
   const tmp = useRef(new THREE.Color());
+  const wsm = useRef(0);
 
   const res = useMemo(() => {
     const arc = new THREE.TorusGeometry(R + 0.2, 0.035, 5, 10, 0.95);
@@ -44,15 +55,12 @@ function World() {
     }
     const ticks = new THREE.BufferGeometry();
     ticks.setAttribute('position', new THREE.Float32BufferAttribute(tp, 3));
-    const rp: number[] = [];
-    for (let k = 0; k < 18; k++) {
-      const a = (k / 18) * Math.PI * 2;
-      rp.push(Math.cos(a) * (R + 0.1), Math.sin(a) * (R + 0.1), 2, Math.cos(a) * (R + 0.1), Math.sin(a) * (R + 0.1), -LEN);
-    }
     const railGeo = new THREE.BufferGeometry();
-    railGeo.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
-    const wall = new THREE.CylinderGeometry(R + 0.5, R + 0.5, LEN + 10, 40, 1, true);
-    const floorStrips = [0, 1, 2, 3].map((l) => laneStripGeometry(l, LEN + 10, R - 0.02, 0.3));
+    railGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(RAIL_N * RAIL_S * 6), 3));
+    const wall = new THREE.CylinderGeometry(R + 0.5, R + 0.5, LEN + 10, 40, 48, true);
+    const wallBase = worldGeo(wall);
+    const floorStrips = [0, 1, 2, 3].map((l) => laneStripGeometry(l, LEN + 10, R - 0.02, 0.3, 48));
+    const floorBases = floorStrips.map(worldGeo);
     const flashGeos = [0, 1, 2, 3].map((l) => laneStripGeometry(l, 1, R - 0.01, 0.31));
     const hitLine = new THREE.TorusGeometry(R - 0.03, 0.03, 4, 20, 4 * LANE_STEP + 0.04);
     const noteGeo = new THREE.BoxGeometry(1.1, 0.3, 0.7);
@@ -65,11 +73,14 @@ function World() {
     const pp = new Float32Array(PARTS * 3);
     const partGeo = new THREE.BufferGeometry();
     partGeo.setAttribute('position', new THREE.BufferAttribute(pp, 3));
+    for (const geometry of [wall, ...floorStrips, railGeo, streakGeo, partGeo]) {
+      (geometry.attributes.position as THREE.BufferAttribute).setUsage(THREE.DynamicDrawUsage);
+    }
     const lineMat = (c: string, o: number) => new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: o, blending: THREE.AdditiveBlending, depthWrite: false });
     const ringMats = [0, 1, 2].map(() => new THREE.MeshBasicMaterial({ color: '#22e6ff', transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
     return {
       arc, thick, ticks, railGeo, wall, floorStrips, flashGeos, hitLine, noteGeo, shipGeo, trailGeo, coreGeo, streakGeo, partGeo, sp, pp,
-      ringMats,
+      ringMats, wallBase, floorBases,
       tickMat: lineMat('#22e6ff', 0.55),
       railMat: lineMat('#ff2e9a', 0.3),
       streakMat: lineMat('#9fe9ff', 0.4),
@@ -114,6 +125,10 @@ function World() {
       pulse = Math.pow(1 - ph, 3) * (active ? 1 : 0.5);
     }
     const combo01 = active ? Math.min(snap.combo, 60) / 60 : 0;
+    const wTarget = warpTarget(reduced, active, pulse, combo01, fresh);
+    if (reduced) wsm.current = 0;
+    else if (!paused) wsm.current += (wTarget - wsm.current) * Math.min(1, dt * 3);
+    const ws = wsm.current < 0.001 ? 0 : wsm.current;
 
     if (trackId.current !== snap.track.id) { trackId.current = snap.track.id; tcol.current.set(snap.track.color); }
     res.ringMats[0].color.lerp(tcol.current, 0.06);
@@ -131,14 +146,45 @@ function World() {
       const ch = rings.current.children;
       for (let i = 0; i < ch.length; i++) {
         const g = ch[i];
-        g.position.z = -i * GAP + off + 1;
+        const zz = -i * GAP + off + 1;
         const dir = i % 2 ? 1 : -1;
-        g.rotation.z = i * 0.45 + (reduced ? 0 : dir * d * (0.02 + (i % 3) * 0.012));
+        const rot = i * 0.45 + (reduced ? 0 : dir * d * (0.02 + (i % 3) * 0.012));
         const s = 1 + pulse * 0.025 * (1 - i / ch.length);
-        g.scale.set(s, s, 1);
+        warpSliceMatrix(zz, d, ws, m0);
+        const cr = Math.cos(rot) * s, sr = Math.sin(rot) * s;
+        g.matrixAutoUpdate = false;
+        g.matrix.set(
+          m0[0] * cr + m0[1] * sr, -m0[0] * sr + m0[1] * cr, 0, m0[4],
+          m0[2] * cr + m0[3] * sr, -m0[2] * sr + m0[3] * cr, 0, m0[5],
+          0, 0, 1, zz,
+          0, 0, 0, 1,
+        );
+        g.matrixWorldNeedsUpdate = true;
       }
     }
-    if (rails.current) rails.current.rotation.z = reduced ? 0 : d * 0.012;
+    // long geometry: longitudinally sampled, warped per slice
+    warpPositions(res.wallBase, res.wall.attributes.position.array as unknown as { [i: number]: number }, d, ws);
+    res.wall.attributes.position.needsUpdate = true;
+    for (let l = 0; l < 4; l++) {
+      const g = res.floorStrips[l];
+      warpPositions(res.floorBases[l], g.attributes.position.array as unknown as { [i: number]: number }, d, ws);
+      g.attributes.position.needsUpdate = true;
+    }
+    {
+      const rp = res.railGeo.attributes.position.array as Float32Array;
+      const rr = R + 0.1, rrot = reduced ? 0 : d * 0.012, step = (2 + LEN) / RAIL_S;
+      let o = 0;
+      for (let j = 0; j < RAIL_S; j++) {
+        warpSliceMatrix(2 - j * step, d, ws, m0);
+        warpSliceMatrix(2 - (j + 1) * step, d, ws, m1);
+        for (let k = 0; k < RAIL_N; k++) {
+          const a = (k / RAIL_N) * Math.PI * 2 + rrot, x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+          rp[o++] = m0[0] * x + m0[1] * y + m0[4]; rp[o++] = m0[2] * x + m0[3] * y + m0[5]; rp[o++] = 2 - j * step;
+          rp[o++] = m1[0] * x + m1[1] * y + m1[4]; rp[o++] = m1[2] * x + m1[3] * y + m1[5]; rp[o++] = 2 - (j + 1) * step;
+        }
+      }
+      res.railGeo.attributes.position.needsUpdate = true;
+    }
 
     // streaks and particles (not in reduced)
     res.streakMat.visible = !reduced;
@@ -149,8 +195,11 @@ function World() {
         const a = rnd(i) * Math.PI * 2, r = R * (0.35 + rnd(i + 99) * 0.6);
         const z = -(((rnd(i + 7) * LEN + d * (0.8 + rnd(i + 3) * 0.6)) % LEN)) + 2;
         const o = i * 6;
-        res.sp[o] = Math.cos(a) * r; res.sp[o + 1] = Math.sin(a) * r; res.sp[o + 2] = z;
-        res.sp[o + 3] = res.sp[o]; res.sp[o + 4] = res.sp[o + 1]; res.sp[o + 5] = z - len;
+        const sx = Math.cos(a) * r, sy = Math.sin(a) * r;
+        warpTunnelPoint(sx, sy, z, d, ws, warpOut);
+        res.sp[o] = warpOut.x; res.sp[o + 1] = warpOut.y; res.sp[o + 2] = z;
+        warpTunnelPoint(sx, sy, z - len, d, ws, warpOut);
+        res.sp[o + 3] = warpOut.x; res.sp[o + 4] = warpOut.y; res.sp[o + 5] = z - len;
       }
       res.streakGeo.attributes.position.needsUpdate = true;
       const vis = Math.floor(PARTS * (0.35 + combo01 * 0.65));
@@ -158,13 +207,16 @@ function World() {
         const o = i * 3;
         if (i >= vis) { res.pp[o + 2] = 50; continue; }
         const a = rnd(i + 500) * Math.PI * 2 + d * 0.015, r = R * (0.2 + rnd(i + 600) * 0.7);
-        res.pp[o] = Math.cos(a) * r; res.pp[o + 1] = Math.sin(a) * r;
-        res.pp[o + 2] = -(((rnd(i + 700) * 50 + d * 0.5) % 50)) + 1;
+        const pz = -(((rnd(i + 700) * 50 + d * 0.5) % 50)) + 1;
+        warpTunnelPoint(Math.cos(a) * r, Math.sin(a) * r, pz, d, ws, warpOut);
+        res.pp[o] = warpOut.x; res.pp[o + 1] = warpOut.y; res.pp[o + 2] = pz;
       }
       res.partGeo.attributes.position.needsUpdate = true;
     }
 
     if (core.current) {
+      warpTunnelPoint(0, 0, -75, d, ws, warpOut);
+      core.current.position.set(warpOut.x, warpOut.y, -75);
       res.coreMat.color.copy(tcol.current);
       res.coreMat.opacity = 0.25 + pulse * 0.2 + combo01 * 0.15;
     }
@@ -183,10 +235,20 @@ function World() {
         const a = laneAngle(nt.lane);
         m.visible = true;
         m.material = res.noteMats[nt.lane];
-        m.position.set(Math.sin(a) * (R - 0.2), -Math.cos(a) * (R - 0.2), -dd * SPEED);
-        m.rotation.z = a;
+        warpTunnelPoint(Math.sin(a) * (R - 0.2), -Math.cos(a) * (R - 0.2), -dd * SPEED, d, ws, warpOut);
         const sc = dd > AHEAD - 0.5 ? (AHEAD - dd) / 0.5 : 1;
-        m.scale.setScalar(Math.max(0.01, sc));
+        const scale = Math.max(0.01, sc);
+        const cr = Math.cos(a) * scale, sr = Math.sin(a) * scale;
+        warpSliceMatrix(warpOut.z, d, ws, m0);
+        // Apply the same slice basis as the lane, not just its displaced center.
+        m.matrixAutoUpdate = false;
+        m.matrix.set(
+          m0[0] * cr + m0[1] * sr, -m0[0] * sr + m0[1] * cr, 0, warpOut.x,
+          m0[2] * cr + m0[3] * sr, -m0[2] * sr + m0[3] * cr, 0, warpOut.y,
+          0, 0, scale, warpOut.z,
+          0, 0, 0, 1,
+        );
+        m.matrixWorldNeedsUpdate = true;
       }
       for (let i = n; i < POOL; i++) grp.children[i].visible = false;
     }
@@ -218,21 +280,21 @@ function World() {
   return (
     <>
       <fog attach="fog" args={['#070514', 14, 62]} />
-      <mesh geometry={res.wall} material={res.wallMat} rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -35]} />
+      <mesh geometry={res.wall} material={res.wallMat} frustumCulled={false} />
       <mesh ref={core} geometry={res.coreGeo} material={res.coreMat} position={[0, 0, -75]} />
-      <lineSegments ref={rails} geometry={res.railGeo} material={res.railMat} />
+      <lineSegments ref={rails} geometry={res.railGeo} material={res.railMat} frustumCulled={false} />
       <group ref={rings}>
         {Array.from({ length: RINGS }, (_, i) => (
           <group key={i} position={[0, 0, -i * GAP]}>
             {[0, 1, 2, 3, 4].map((k) => (
-              <mesh key={k} geometry={k === 0 ? res.thick : res.arc} material={res.ringMats[(i + k) % 3]} rotation={[0, 0, (k * Math.PI * 2) / 5]} />
+              <mesh key={k} geometry={k === 0 ? res.thick : res.arc} material={res.ringMats[(i + k) % 3]} rotation={[0, 0, (k * Math.PI * 2) / 5]} frustumCulled={false} />
             ))}
-            <lineSegments geometry={res.ticks} material={res.tickMat} rotation={[0, 0, i * 0.7]} />
+            <lineSegments geometry={res.ticks} material={res.tickMat} rotation={[0, 0, i * 0.7]} frustumCulled={false} />
           </group>
         ))}
       </group>
       {[0, 1, 2, 3].map((l) => (
-        <mesh key={l} geometry={res.floorStrips[l]} material={res.laneMats[l]} rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -35]} />
+        <mesh key={l} geometry={res.floorStrips[l]} material={res.laneMats[l]} frustumCulled={false} />
       ))}
       <group ref={flashes}>
         {[0, 1, 2, 3].map((l) => (
