@@ -8,6 +8,9 @@ A responsive browser rhythm game: race through a Three.js tunnel, hit four lanes
 - `pnpm --filter @workspace/pulse-runner run typecheck` — check the game
 - `pnpm --filter @workspace/scripts exec tsx --test ../artifacts/pulse-runner/src/game/missions.test.ts` — focused mission and game lifecycle checks
 - `pnpm --filter @workspace/scripts exec tsx --test ../artifacts/pulse-runner/src/game/timing.test.ts` — calibration, storage, audio-clock and note-arrival checks
+- `pnpm --filter @workspace/pulse-runner run test:unit` — mission/lifecycle and tunnel projection unit tests
+- `pnpm --filter @workspace/pulse-runner run test:e2e` — playable browser regression matrix; see `artifacts/pulse-runner/e2e/README.md` for setup and renderer evidence
+- `pnpm --filter @workspace/pulse-runner run test:e2e:types` — check the browser test harness
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
