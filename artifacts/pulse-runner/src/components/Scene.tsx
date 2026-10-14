@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { game } from '@/game/engine';
-import { TUNNEL_RADIUS as R, LANE_STEP, laneAngle, laneStripGeometry, CAMERA_Y, CAMERA_Z, CAMERA_FOV, CAMERA_PITCH } from './tunnel-layout';
 import { warpTunnelPoint, warpSliceMatrix, warpPositions, warpTarget } from './tunnel-warp';
+import { TUNNEL_RADIUS as R, LANE_STEP, laneAngle, laneStripGeometry, CAMERA_Y, CAMERA_Z, CAMERA_FOV, CAMERA_PITCH, NOTE_SPEED as SPEED, NOTE_LOOKAHEAD as AHEAD, notePositionZ } from './tunnel-layout';
 
 const RAIL_N = 18, RAIL_S = 40;
 const WALL_Z = -35;
@@ -15,8 +15,6 @@ const worldGeo = (g: THREE.BufferGeometry) => {
 };
 
 export const LANE_COLORS = ['#ff2e9a', '#ffd23f', '#22e6ff', '#7dff5a'];
-const SPEED = 16;
-const AHEAD = 3.2;
 const RINGS = 26;
 const GAP = 3.4;
 const POOL = 90;
@@ -116,7 +114,7 @@ function World() {
     const spd = paused ? 0 : SPEED * (boost + fresh * 0.5);
     dist.current += spd * dt;
     const d = dist.current;
-    const t = game.getTime();
+    const t = game.getNoteTime();
     // beat pulse from audio clock while active; idle time only for preview
     let pulse = 0;
     if (!reduced && !paused) {
@@ -221,7 +219,7 @@ function World() {
       res.coreMat.opacity = 0.25 + pulse * 0.2 + combo01 * 0.15;
     }
 
-    // notes: z derived only from audio time
+    // Notes and beat pulses share the calibrated, audio-derived judgment clock.
     const grp = notes.current;
     if (grp) {
       const list = active || paused ? game.getNotes() : [];
@@ -235,7 +233,7 @@ function World() {
         const a = laneAngle(nt.lane);
         m.visible = true;
         m.material = res.noteMats[nt.lane];
-        warpTunnelPoint(Math.sin(a) * (R - 0.2), -Math.cos(a) * (R - 0.2), -dd * SPEED, d, ws, warpOut);
+        warpTunnelPoint(Math.sin(a) * (R - 0.2), -Math.cos(a) * (R - 0.2), notePositionZ(nt.time, t), d, ws, warpOut);
         const sc = dd > AHEAD - 0.5 ? (AHEAD - dd) / 0.5 : 1;
         const scale = Math.max(0.01, sc);
         const cr = Math.cos(a) * scale, sr = Math.sin(a) * scale;
@@ -316,7 +314,6 @@ function World() {
     </>
   );
 }
-
 export function Scene() {
   return (
     <Canvas

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Pause, Play, RotateCcw, HelpCircle, Volume2, VolumeX, X, Home } from 'lucide-react';
 import { game, TRACKS, DIFFICULTIES, type Lane } from '@/game/engine';
 import { MissionBoard, MissionError, MissionHud, MissionResults, EffectsToggle } from '@/components/Missions';
+import { CalibrationEntry, CalibrationError } from '@/components/Calibration';
 import { Scene, webglAvailable, LANE_COLORS } from '@/components/Scene';
 import { SoftwareScene } from '@/components/SoftwareScene';
 
@@ -179,6 +180,8 @@ function Menu({ onHelp }: { onHelp: () => void }) {
           <span className="mono text-xs text-white/50">or press SPACE</span>
         </div>
         <div className="mt-4"><EffectsToggle on={s.reducedEffects} /></div>
+        <div className="mt-3"><CalibrationEntry offset={s.timingOffsetMs} error={s.timingError} volume={s.volume} /></div>
+        <CalibrationError message={s.timingError} />
       </div>
       <div className="lg:pt-14"><MissionBoard missions={s.missions} /></div>
       </div>
@@ -220,6 +223,8 @@ function Results() {
         <MissionResults missions={s.missions} />
         <MissionError message={s.missionError} />
         {s.error && <div className="mono mt-4 border border-red-400 bg-red-950/70 p-2 text-xs" data-testid="text-game-error">{s.error}</div>}
+        <div className="mt-4"><CalibrationEntry offset={s.timingOffsetMs} error={s.timingError} volume={s.volume} /></div>
+        <CalibrationError message={s.timingError} />
         <div className="mt-4 flex flex-wrap gap-3">
           <Btn id="button-retry" onClick={() => void game.restart()}><RotateCcw size={18} /> Retry</Btn>
           <Btn id="button-menu" tone="ghost" onClick={() => game.exit()}><Home size={18} /> Tracks</Btn>
@@ -271,6 +276,7 @@ function App() {
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
+      if (document.querySelector('dialog[data-calibration][open]')) return;
       if (e.repeat) return;
       const t = e.target as HTMLElement;
       if (t && (t.tagName === 'INPUT' || t.closest?.('[data-hotkey-skip]')) && e.code === 'Space') return;

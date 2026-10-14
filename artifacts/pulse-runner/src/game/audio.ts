@@ -1,3 +1,5 @@
+import { CALIBRATION_BEATS, CALIBRATION_INTERVAL } from "./timing";
+
 export interface MusicTrack {
   id: string;
   bpm: number;
@@ -41,8 +43,9 @@ export class SynthMusic {
         data[i] = (seed / 2147483647) * 2 - 1;
       }
     }
-    await this.context.resume();
-    if (this.context.state !== "running") {
+    const context = this.context;
+    await context.resume();
+    if (context.state !== "running") {
       throw new Error("Sound could not start. Tap Start again to enable audio.");
     }
   }
@@ -61,6 +64,21 @@ export class SynthMusic {
     this.running = true;
     this.schedule();
     this.timer = setInterval(() => this.schedule(), 25);
+  }
+
+  /** A separate SynthMusic instance runs this optional exercise, never the song. */
+  startCalibration() {
+    this.stop();
+    if (!this.context || this.context.state !== "running") {
+      throw new Error("Enable sound before starting the timing exercise.");
+    }
+    this.track = null;
+    this.frozenTime = -1;
+    this.origin = this.context.currentTime + 1;
+    this.running = true;
+    for (let beat = 0; beat < CALIBRATION_BEATS; beat++) {
+      this.tone(this.origin + beat * CALIBRATION_INTERVAL, beat === 0 ? 1200 : 800, 0.045, 0.35);
+    }
   }
 
   pause() {
@@ -83,6 +101,18 @@ export class SynthMusic {
     this.running = false;
     this.frozenTime = 0;
     this.clearScheduled();
+  }
+
+  /** Release the exercise's private audio device when its dialog is closed. */
+  async dispose() {
+    this.stop();
+    const context = this.context;
+    this.context = null;
+    this.master = null;
+    this.compressor = null;
+    this.noise = null;
+    this.track = null;
+    if (context && context.state !== "closed") await context.close();
   }
 
   setVolume(value: number) {

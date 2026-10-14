@@ -1,11 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { game } from '@/game/engine';
-import { TUNNEL_RADIUS as R, LANE_STEP as STEP, laneAngle as laneA, CAMERA_Y as camY, CAMERA_Z as camZ, CAMERA_FOV, CAMERA_PITCH, projectionScale } from './tunnel-layout';
 import { warpTunnelPoint, warpTarget } from './tunnel-warp';
+import { TUNNEL_RADIUS as R, LANE_STEP as STEP, laneAngle as laneA, CAMERA_Y as camY, CAMERA_Z as camZ, CAMERA_FOV, CAMERA_PITCH, projectionScale, NOTE_SPEED as SPEED, NOTE_LOOKAHEAD as AHEAD, notePositionZ } from './tunnel-layout';
 
 const COLORS = ['#ff2e9a', '#ffd23f', '#22e6ff', '#7dff5a'];
-const SPEED = 16;
-const AHEAD = 3.2;
 const GAP = 3.4;
 const RINGS = 22;
 const SEG = 5;
@@ -41,7 +39,7 @@ export function SoftwareScene() {
       const combo01 = active ? Math.min(snap.combo, 60) / 60 : 0;
       const boost = active ? (reduced ? 1 : 1 + Math.min(snap.combo, 60) / 40) : 0.7;
       dist += snap.phase === 'paused' ? 0 : SPEED * (boost + fresh * 0.5) * dt;
-      const t = game.getTime();
+      const t = game.getNoteTime();
       let pulse = 0;
       if (!reduced && snap.phase !== 'paused') {
         const ph = active ? (((t * snap.track.bpm / 60) % 1) + 1) % 1 : (now / 625) % 1;
@@ -178,7 +176,7 @@ export function SoftwareScene() {
       if (snap.phase !== 'idle' && snap.phase !== 'results') {
         const vis = game.getNotes().filter((n) => n.status === 'pending' && n.time - t <= AHEAD && n.time - t >= -0.25).sort((a, b) => b.time - a.time);
         for (const n of vis) {
-          const d = n.time - t, z = -d * SPEED, a = laneA(n.lane);
+          const d = n.time - t, z = notePositionZ(n.time, t), a = laneA(n.lane);
           const sn = Math.sin(a), cs = Math.cos(a);
           // lateral axis (cs, sn), inward axis (-sn, cs)
           const rr = R - 0.2;

@@ -7,6 +7,7 @@ A responsive browser rhythm game: race through a Three.js tunnel, hit four lanes
 - `pnpm --filter @workspace/pulse-runner run dev` — managed web workflow (provides PORT and BASE_PATH)
 - `pnpm --filter @workspace/pulse-runner run typecheck` — check the game
 - `pnpm --filter @workspace/scripts exec tsx --test ../artifacts/pulse-runner/src/game/missions.test.ts` — focused mission and game lifecycle checks
+- `pnpm --filter @workspace/scripts exec tsx --test ../artifacts/pulse-runner/src/game/timing.test.ts` — calibration, storage, audio-clock and note-arrival checks
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
@@ -48,6 +49,7 @@ A responsive browser rhythm game: race through a Three.js tunnel, hit four lanes
 - D/F/J/K or Left/Down/Up/Right key timing; touch pads for smaller screens.
 - Perfect/Good/Miss judgments, combo multipliers, accuracy, final grades, and local personal bests.
 - Start/countdown, pause/resume, restart, track selection, volume/mute, and help.
+- Optional timing calibration from Tracks or Results: eight audible/visual clicks, tap suggestion or manual −300 to +300 ms, reset to 0, and browser-local preference with storage warnings. Adjustments apply between runs; this is not a hardware-latency guarantee.
 - Four missions: finish a track, reach a 20-hit combo, land 40 perfect hits, and score 100,000 points. Completed badges persist locally; incomplete objectives reset each run.
 
 ## User preferences

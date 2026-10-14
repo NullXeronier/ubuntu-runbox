@@ -1,5 +1,6 @@
 import { SynthMusic } from "./audio";
 import { MissionTracker, type MissionProgress } from "./missions";
+import { calibratedTime, TimingPreference } from "./timing";
 
 export type Lane = 0 | 1 | 2 | 3;
 export type Phase = "idle" | "countdown" | "playing" | "paused" | "results";
@@ -46,6 +47,8 @@ export interface GameSnapshot {
   missions: MissionProgress[];
   missionError: string | null;
   reducedEffects: boolean;
+  timingOffsetMs: number;
+  timingError: string | null;
 }
 
 export const TRACKS: Track[] = [
@@ -102,7 +105,7 @@ function initialSnapshot(track = TRACKS[0]!, difficulty: Difficulty = "normal", 
     accuracy: 100, progress: 0, multiplier: 1, lastJudge: null,
     lastJudgeAt: 0, lastLane: null, lastHitAt: 0, best: readBest(track, difficulty),
     volume, error: null,
-    missions: [], missionError: null, reducedEffects,
+    missions: [], missionError: null, reducedEffects, timingOffsetMs: 0, timingError: null,
   };
 }
 
@@ -111,6 +114,7 @@ type GameAudio = Pick<SynthMusic, "prepare" | "start" | "pause" | "resume" | "st
 export class RhythmGame {
   private audio: GameAudio;
   private missions: MissionTracker;
+  private timing: TimingPreference;
   private snapshot: GameSnapshot;
   private notes: Note[];
   private listeners = new Set<() => void>();
@@ -121,13 +125,16 @@ export class RhythmGame {
   private operation = 0;
   private lastInput: number[] = [-Infinity, -Infinity, -Infinity, -Infinity];
 
-  constructor(options: { audio?: GameAudio; missions?: MissionTracker } = {}) {
+  constructor(options: { audio?: GameAudio; missions?: MissionTracker; timing?: TimingPreference } = {}) {
     this.audio = options.audio ?? new SynthMusic();
     this.missions = options.missions ?? new MissionTracker();
+    this.timing = options.timing ?? new TimingPreference();
     this.snapshot = {
       ...initialSnapshot(),
       missions: this.missions.getSnapshot(),
       missionError: this.missions.getError(),
+      timingOffsetMs: this.timing.getOffset(),
+      timingError: this.timing.getError(),
     };
     this.notes = makeNotes(this.snapshot.track, this.snapshot.difficulty);
     // Background tabs pause instead of silently dropping the player's combo.
@@ -146,6 +153,7 @@ export class RhythmGame {
   getSnapshot = (): GameSnapshot => this.snapshot;
   getTime = () => this.snapshot.phase === "countdown" || this.snapshot.phase === "playing" || this.snapshot.phase === "paused"
     ? this.audio.getTime() : this.snapshot.elapsed;
+  getNoteTime = () => calibratedTime(this.getTime(), this.snapshot.timingOffsetMs);
   getNotes = () => this.notes;
 
   configure = (trackId: string, difficulty: Difficulty) => {
@@ -225,7 +233,7 @@ export class RhythmGame {
     const now = performance.now();
     if (now - this.lastInput[lane]! < 65) return null;
     this.lastInput[lane] = now;
-    const elapsed = this.audio.getTime();
+    const elapsed = this.getNoteTime();
     const window = hitWindow[this.snapshot.difficulty];
     let candidate: Note | undefined;
     let delta = Infinity;
@@ -278,12 +286,21 @@ export class RhythmGame {
     this.update({ reducedEffects, error });
   };
 
+  setTimingOffset = (value: number) => {
+    // Change between runs only: moving pending notes mid-run can create unfair misses.
+    if (!["idle", "results"].includes(this.snapshot.phase) || this.starting || !Number.isFinite(value)) return;
+    this.timing.set(value);
+    this.update({ timingOffsetMs: this.timing.getOffset(), timingError: this.timing.getError() });
+  };
+
   private resetRun(track: Track, difficulty: Difficulty, volume = this.snapshot.volume) {
     this.missions.reset();
     this.snapshot = {
       ...initialSnapshot(track, difficulty, volume, this.snapshot.reducedEffects),
       missions: this.missions.getSnapshot(),
       missionError: this.missions.getError(),
+      timingOffsetMs: this.snapshot.timingOffsetMs,
+      timingError: this.snapshot.timingError,
     };
   }
 
@@ -303,10 +320,11 @@ export class RhythmGame {
   private tick = (now: number) => {
     if (this.snapshot.phase !== "countdown" && this.snapshot.phase !== "playing") return;
     const elapsed = this.audio.getTime();
+    const noteTime = calibratedTime(elapsed, this.snapshot.timingOffsetMs);
     if (elapsed >= 0 && this.snapshot.phase === "countdown") this.update({ phase: "playing" });
     while (this.missCursor < this.notes.length) {
       const note = this.notes[this.missCursor]!;
-      if (note.time >= elapsed - hitWindow[this.snapshot.difficulty]) break;
+      if (note.time >= noteTime - hitWindow[this.snapshot.difficulty]) break;
       if (note.status === "pending") {
         note.status = "missed";
         this.judgeMiss(note.lane);
