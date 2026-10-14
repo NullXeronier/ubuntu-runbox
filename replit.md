@@ -1,19 +1,25 @@
-# [Project name]
+# Pulse Runner
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A responsive browser rhythm game: race through a Three.js tunnel, hit four lanes in time with original electronic music, and build a score and combo.
 
 ## Run & Operate
 
+- `pnpm --filter @workspace/pulse-runner run dev` — managed web workflow (provides PORT and BASE_PATH)
+- `pnpm --filter @workspace/pulse-runner run typecheck` — check the game
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- The game runs entirely in the browser; no database, API keys, or external music service required.
+- `DATABASE_URL` is only needed if developing the unused shared database library.
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
+- Game: React + Vite, Three.js with React Three Fiber, Web Audio
+- Personal bests: browser localStorage, separated by track and difficulty
+- The shared API and database packages are scaffolded but are not used by the game.
 - API: Express 5
 - DB: PostgreSQL + Drizzle ORM
 - Validation: Zod (`zod/v4`), `drizzle-zod`
@@ -22,23 +28,34 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/pulse-runner/src/App.tsx` — menu, HUD, controls, and result screens
+- `artifacts/pulse-runner/src/components/` — tunnel renderers
+- `artifacts/pulse-runner/src/game/engine.ts` — beatmaps, timing, scoring, game lifecycle
+- `artifacts/pulse-runner/src/game/audio.ts` — original procedural synth soundtrack and audio clock
+- `artifacts/pulse-runner/src/index.css` — visual theme
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Keep the first version browser-only: the user asked for a playable music game, not accounts or online leaderboards.
+- Use original procedural electronic music so the game works immediately without external assets, credentials, or licensed tracks.
+- Audio time is authoritative; visual frame rate must not determine note timing.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Three original tracks with distinct tempos and three difficulty levels.
+- D/F/J/K or Left/Down/Up/Right key timing; touch pads for smaller screens.
+- Perfect/Good/Miss judgments, combo multipliers, accuracy, final grades, and local personal bests.
+- Start/countdown, pause/resume, restart, track selection, volume/mute, and help.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- The user explicitly requested a responsive web tunnel runner music game using Three.js, with keyboard rhythm hits and score-based forward travel.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Browser audio starts only after a user gesture. Do not autoplay before Start.
+- Leaving the tab pauses gameplay to prevent unfair misses.
+- Use the existing managed `artifacts/pulse-runner: web` workflow rather than a separate dev server.
 
 ## Pointers
 

@@ -1,0 +1,1 @@
+- [Tunnel rendering verification](tunnel-rendering.md) — the capture browser can lack WebGL2; preserve the primary Three.js renderer and keep the compatibility path playable.

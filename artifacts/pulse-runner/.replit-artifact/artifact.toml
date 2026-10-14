@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Pulse Runner"
+description = "A responsive Three.js music rhythm game that sends players through a reactive tunnel, matching keyboard or touch inputs to the beat to earn scores and combos."
+version = "1.0.0"
+id = "artifacts/pulse-runner"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25983
+
+[services.development]
+run = "pnpm --filter @workspace/pulse-runner run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/pulse-runner", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/pulse-runner/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25983"
+BASE_PATH = "/"
