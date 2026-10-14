@@ -37,11 +37,25 @@ let frameId = 0;
 const originalRaf = globalThis.requestAnimationFrame;
 const originalCancel = globalThis.cancelAnimationFrame;
 const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+let pendingLocks: Map<string, Promise<unknown>>;
 let storage: MemoryStorage;
 
 beforeEach(() => {
   storage = new MemoryStorage();
   Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
+  pendingLocks = new Map();
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { locks: {
+      request(key: string, _options: unknown, callback: () => unknown) {
+        // Acquire asynchronously, with same-key requests serialized.
+        const pending = (pendingLocks.get(key) ?? Promise.resolve()).then(callback);
+        pendingLocks.set(key, pending.catch(() => {}));
+        return pending;
+      },
+    } },
+  });
   now = 1000;
   nextFrame = null;
   mock.method(performance, "now", () => now);
@@ -55,6 +69,8 @@ afterEach(() => {
   globalThis.cancelAnimationFrame = originalCancel;
   if (originalStorage) Object.defineProperty(globalThis, "localStorage", originalStorage);
   else Reflect.deleteProperty(globalThis, "localStorage");
+  if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator);
+  else Reflect.deleteProperty(globalThis, "navigator");
 });
 
 function createRun() {
@@ -242,6 +258,8 @@ test("finishing through the audio clock awards first-run and retains bests and b
   assert.equal(game.getSnapshot().phase, "results");
   assert.equal(game.getSnapshot().progress, 1);
   assert.equal(game.getSnapshot().missions[0]!.completedThisRun, true);
+  assert.equal(storage.getItem("pulse-best:neon-drift:normal"), null);
+  await Promise.all(pendingLocks.values());
   assert.ok(storage.getItem("pulse-best:neon-drift:normal") !== null);
   game.exit();
   assert.equal(game.getSnapshot().missions[0]!.completed, true);
@@ -250,6 +268,25 @@ test("finishing through the audio clock awards first-run and retains bests and b
   assert.equal(game.getSnapshot().missions[0]!.completed, true);
   const reloaded = new RhythmGame({ audio: new FakeMusic(), missions: new MissionTracker(storage) });
   assert.equal(reloaded.getSnapshot().missions[0]!.completed, true);
+});
+
+test("unavailable locks preserve the saved best and warn without losing session results", async () => {
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
+  const key = "pulse-best:neon-drift:normal";
+  storage.values.set(key, "5000");
+  const { game, step } = createRun();
+  await game.start();
+  const note = game.getNotes()[0]!;
+  step(note.time);
+  game.hit(note.lane);
+  step(game.getSnapshot().duration);
+  await Promise.resolve();
+  assert.equal(storage.getItem(key), "5000");
+  assert.equal(game.getSnapshot().phase, "results");
+  assert.equal(game.getSnapshot().score, 1000);
+  assert.equal(game.getSnapshot().best, 5000);
+  assert.equal(game.getSnapshot().missions[0]!.completedThisRun, true);
+  assert.match(game.getSnapshot().error!, /could not save your personal best/);
 });
 
 test("effects preference persists without altering rhythm settings and reports save failures", () => {

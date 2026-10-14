@@ -124,6 +124,7 @@ export class RhythmGame {
   private missCursor = 0;
   private starting = false;
   private operation = 0;
+  private runGeneration = 0;
   private lastInput: number[] = [-Infinity, -Infinity, -Infinity, -Infinity];
 
   constructor(options: { audio?: GameAudio; missions?: MissionTracker; timing?: TimingPreference } = {}) {
@@ -309,6 +310,7 @@ export class RhythmGame {
   };
 
   private resetRun(track: Track, difficulty: Difficulty, volume = this.snapshot.volume) {
+    this.runGeneration++;
     this.missions.reset();
     this.snapshot = {
       ...initialSnapshot(track, difficulty, volume, this.snapshot.reducedEffects),
@@ -360,17 +362,34 @@ export class RhythmGame {
   private finish() {
     this.audio.stop();
     this.cancelFrame();
-    let best = Math.max(this.snapshot.best, this.snapshot.score);
+    const { track, difficulty } = this.snapshot;
+    const best = Math.max(this.snapshot.best, this.snapshot.score);
+    const generation = this.runGeneration;
+    // Results and missions must not wait for another tab to release its lock.
+    this.update({ phase: "results", elapsed: this.snapshot.duration, progress: 1, best, error: null });
+    void this.saveBest(track, difficulty, best, generation);
+  }
+
+  private async saveBest(track: Track, difficulty: Difficulty, best: number, generation: number) {
     let error: string | null = null;
     try {
-      // Re-read at the write boundary: storage events may not have arrived yet.
-      // If reading is denied, do not overwrite an unknown, possibly higher best.
-      best = Math.max(best, readBest(this.snapshot.track, this.snapshot.difficulty, true));
-      localStorage.setItem(`pulse-best:${this.snapshot.track.id}:${this.snapshot.difficulty}`, String(best));
+      // Secure-context Web Locks serialize all cooperating tabs on this origin.
+      // Never fall back to an unsafe localStorage read/compare/write.
+      if (!navigator.locks?.request) throw new Error("Safe cross-tab saving is unavailable");
+      const key = `pulse-best:${track.id}:${difficulty}`;
+      await navigator.locks.request(key, { mode: "exclusive" }, () => {
+        // Read inside the lock, not when the run ends or the request is queued.
+        // A denied read must not replace an unknown, possibly higher score.
+        best = Math.max(best, readBest(track, difficulty, true));
+        localStorage.setItem(key, String(best));
+      });
     } catch {
       error = "Your score is shown below, but this browser could not save your personal best.";
     }
-    this.update({ phase: "results", elapsed: this.snapshot.duration, progress: 1, best, error });
+    // A pending save may finish after replay, menu selection, or a new run.
+    if (generation === this.runGeneration && this.snapshot.phase === "results") {
+      this.update({ best: Math.max(best, this.snapshot.best), error });
+    }
   }
 
   private startFrame() {

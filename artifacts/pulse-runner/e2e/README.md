@@ -1,5 +1,20 @@
 # Playable Pulse Runner regression tests
 
+## Personal-best browser support
+
+Personal-best writes require the native Web Locks API in a secure context
+(HTTPS or localhost): Chromium 69+, Firefox 96+, Safari 15.4+. All tabs running
+this version serialize the entire read/compare/write under the same per-score
+exclusive lock. Older already-open app versions must be reloaded to cooperate.
+If locks are unavailable/rejected, or storage cannot be read/written, results
+and earned session badges remain playable and the existing save warning appears.
+There is intentionally no unlocked persistence fallback.
+
+`concurrent-best.spec.ts` holds a real origin lock in a third tab until both
+finished runs have queued saves, tests both score orderings with storage events
+suppressed, and checks the final persisted maximum after both writers drain.
+It also covers missing/rejected locks and denied reads without losing results.
+
 Run from the workspace root:
 
 ```sh
