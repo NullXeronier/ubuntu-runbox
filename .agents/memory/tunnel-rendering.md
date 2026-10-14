@@ -28,12 +28,13 @@ lockfile on a supported host. Record browser-setup blockers separately from
 application failures, and leave release verification pending until each required
 engine actually executes its journeys.
 
-Confirm runner repository access with an authenticated Git operation before
-claiming that a connected Git provider can execute CI.
+Confirm runner repository write access before claiming that a connected Git
+provider can upload code and execute CI; a successful read can be anonymous.
 
 **Why:** A provider reported healthy authorization and repository/workflow
 scopes while the task workspace's Git credential helper was rejected by GitHub.
-Connection status and usable workspace credentials are separate checks.
+Connection status and usable workspace credentials are separate checks. A
+subsequent successful repository read did not imply a push would authenticate.
 
 **How to apply:** Keep CI execution pending when the actual Git operation
 fails. Do not infer successful uploads or runs from a connection confirmation,
