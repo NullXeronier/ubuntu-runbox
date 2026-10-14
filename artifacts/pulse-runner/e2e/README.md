@@ -19,7 +19,7 @@ Run from the workspace root:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm --filter @workspace/pulse-runner exec playwright install chromium
+pnpm --filter @workspace/pulse-runner exec playwright install chromium firefox webkit
 pnpm --filter @workspace/pulse-runner run test:unit
 pnpm --filter @workspace/pulse-runner run test:e2e:types
 pnpm --filter @workspace/pulse-runner run test:e2e
@@ -35,14 +35,34 @@ URL **with a trailing slash**, including any artifact base path. For example,
 `PULSE_E2E_BASE_URL="https://<development-domain>/"`. The tests use relative
 navigation and will not start a replacement server in this mode. If Chromium
 is supplied by the environment, `PULSE_E2E_CHROMIUM` can name its executable.
-On Linux outside Replit, install Playwright's documented Chromium OS libraries
-as part of CI setup as well as downloading its browser.
+On supported Linux CI hosts, install Playwright's documented OS libraries for
+all three engines as well as downloading their version-matched browsers:
+
+```sh
+pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox webkit
+CI=1 pnpm --filter @workspace/pulse-runner run test:e2e
+```
+
+The lockfile currently resolves Playwright 1.64.0: its bundled engines are
+Chromium 156.0.8078.4, Firefox 157.0 (revision 1555), and WebKit 27.2 (revision
+2370; OS-specific revisions can differ). Browser-version attachments record
+what actually ran, including any system Chromium override. Do not reuse an
+older Nix Playwright bundle with the newer driver: browser protocols differ.
+WebKit is Safari's engine, **not** branded Safari or a real iPhone.
 
 On Replit/NixOS the config automatically uses the `chromium` installed by this
 project's Nix packages, with its runtime-library wrapper. A downloaded Linux
 Playwright binary alone can fail to find `libglib-2.0.so.0` on NixOS. Outside
 Replit the default remains Playwright's version-matched Chromium; the explicit
-executable override takes precedence everywhere.
+executable override takes precedence everywhere. This Chromium exception must
+not leak into Firefox/WebKit launch options. Firefox and WebKit use the
+version-matched bundled executables, not ordinary system Firefox/Safari.
+
+Downloading these bundles does not install their runtime libraries on NixOS.
+If Firefox/WebKit cannot launch or create a page, the result is a browser setup
+failure, not an application regression, and not passing coverage. Run the same
+matrix on a supported host with its dependencies; never substitute an older
+incompatible browser or remove a failing project from the release command.
 
 ## Required matrix
 
@@ -52,19 +72,66 @@ executable override takes precedence everywhere.
 | desktop-canvas2d | 1280 × 800 | D/F/J/K and arrow keys | Canvas2D compatibility |
 | mobile-webgl2 | 375 × 812 | Trusted touchscreen taps on pads | Actual Three.js WebGL2 |
 | mobile-canvas2d | 375 × 812 | Trusted touchscreen taps on pads | Canvas2D compatibility |
+| firefox-desktop-webgl2 | 1280 × 800 | D/F/J/K and arrow keys | Actual Three.js WebGL2 |
+| firefox-desktop-canvas2d | 1280 × 800 | D/F/J/K and arrow keys | Canvas2D compatibility |
+| firefox-mobile-webgl2 | 375 × 812 | Trusted touchscreen taps on pads | Actual Three.js WebGL2 |
+| firefox-mobile-canvas2d | 375 × 812 | Trusted touchscreen taps on pads | Canvas2D compatibility |
+| webkit-desktop-webgl2 | 1280 × 800 | D/F/J/K and arrow keys | Actual Three.js WebGL2 |
+| webkit-desktop-canvas2d | 1280 × 800 | D/F/J/K and arrow keys | Canvas2D compatibility |
+| webkit-mobile-webgl2 | 375 × 812 | Trusted touchscreen taps on pads | Actual Three.js WebGL2 |
+| webkit-mobile-canvas2d | 375 × 812 | Trusted touchscreen taps on pads | Canvas2D compatibility |
 
-All seventeen journeys run in every project (68 test cases). Nothing is skipped
-when WebGL fails. WebGL projects enable Chromium ANGLE/SwiftShader: this is
+Firefox's mobile rows use a narrow viewport and native trusted touch;
+`isMobile` is intentionally off because Playwright Firefox does not implement
+mobile layout emulation. These rows do not certify Android Firefox or hardware.
+
+All four journeys run in every project (48 test cases). Nothing is silently
+skipped or downgraded when WebGL fails. Chromium WebGL projects enable
+ANGLE/SwiftShader: this is
 software-backed **real WebGL2**, including Three.js startup, GLSL compilation,
 and draw calls, not a CPU projection check. It does not certify physical GPU
-drivers or device audio latency. Compatibility projects disable WebGL using
-browser launch flags, not by changing the app's capability check.
+drivers or device audio latency. Firefox/WebKit request their native WebGL2,
+without Chromium flags or executable overrides.
+
+Every compatibility project uses explicit fault injection: an init script
+rejects `getContext('webgl2'/'webgl'/'experimental-webgl')` at the browser API
+boundary. Actual Canvas2D paint calls and rejected context requests are required.
+This exercises the production fallback without changing the app's capability
+check. Reports label this **injected-context-denial**, not a claim that the
+engine naturally lacks WebGL. WebGL projects never install that denial.
 
 Every test has a context/draw-call probe. Reports assert which connected canvas
 actually drew, check nonzero dimensions, and for WebGL check the native version,
 context-loss state, and GL error. The compatibility run also asserts that a
-fresh native `getContext('webgl2')` fails. Renderer evidence is printed and
+fresh `getContext('webgl2')` fails under the recorded denial policy. Renderer evidence is printed and
 attached to the report; console/uncaught errors fail a test.
+
+## Unsupported hosts versus application failures
+
+Before loading any application code or installing instrumentation, each test
+probes a disposable blank document in its configured engine/device context.
+`environment-capabilities` records browser version, native WebGL2 availability,
+version/error/loss state, user agent, touch capability, and native audio state,
+sample rate and advancing clock after a trusted mouse/touch gesture. This
+isolates a genuinely missing graphics/audio capability from game startup,
+shader, input or scoring failures.
+
+- **Default/release mode:** missing required capabilities fail explicitly.
+  Browser launch/page-creation errors also fail; they are never caught and
+  converted into app passes.
+- **Local diagnostics only:** `PULSE_E2E_ALLOW_UNSUPPORTED=1` permits an explicit
+  SKIP only when the blank-page probe establishes a missing capability. The
+  report includes `unsupported-environment` with the reason. It does not
+  select Canvas2D in a WebGL project or suppress later application failures.
+  This setting is forbidden in CI; skips do not count as release evidence.
+- **App failure:** if the blank-page capability exists but the game falls back,
+  fails to create its Three.js context, fails shaders/draws, fails to resume
+  audio, or misses a journey assertion, the test fails even in diagnostics.
+
+For hosts that only expose graphics with a display, use a display-equipped
+runner and `PULSE_E2E_HEADED=1` (on Linux, under an appropriately configured
+Xvfb/Mesa setup). Capability checks still apply; headed mode never fabricates
+WebGL support. Audible output and physical latency remain outside these tests.
 
 ## What runs
 
@@ -144,6 +211,9 @@ screenshots. The same console/uncaught-error guard applies to all fault cases.
 pnpm --filter @workspace/pulse-runner run test:e2e:report
 # Focus on a particular renderer/device without changing the suite:
 pnpm --filter @workspace/pulse-runner run test:e2e --project=mobile-webgl2
+pnpm --filter @workspace/pulse-runner run test:e2e --project=firefox-desktop-webgl2 --project=webkit-mobile-canvas2d
+# Local-only explicit unsupported capability reporting; not release evidence:
+PULSE_E2E_ALLOW_UNSUPPORTED=1 pnpm --filter @workspace/pulse-runner run test:e2e
 ```
 
 `generated-artifacts/pulse-runner/` contains the HTML report, machine-readable

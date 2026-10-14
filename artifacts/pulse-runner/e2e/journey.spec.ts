@@ -63,6 +63,15 @@ test('native-clock renderer/audio startup and visible countdown reach gameplay',
   await expect(page.getByTestId('text-countdown')).toBeHidden({ timeout: 8_000 });
   await expect(page.getByTestId('button-pause')).toBeVisible();
   expect(await page.evaluate(() => window.__pulseProbe.audio.map((audio) => audio.state))).toEqual(['running']);
+  const audioStart = await page.evaluate(() => window.__pulseProbe.audio[0]!.currentTime);
+  await expect.poll(() => page.evaluate(() => window.__pulseProbe.audio[0]!.currentTime))
+    .toBeGreaterThan(audioStart + 0.05);
+  await info.attach('native-audio', {
+    body: JSON.stringify(await page.evaluate(() => window.__pulseProbe.audio.map((audio) => ({
+      state: audio.state, currentTime: audio.currentTime, sampleRate: audio.sampleRate,
+    }))), null, 2),
+    contentType: 'application/json',
+  });
   await checkRenderer(page, info, 'native-playing');
   await info.attach('native-playing', { body: await page.screenshot(), contentType: 'image/png' });
   await pressButton(page, info, 'button-pause');
@@ -578,4 +587,3 @@ test('storage faults: effects save failure warns but applies for the session wit
   await expect(page.getByTestId('badge-complete-first-run')).toHaveText('DONE');
   await checkRenderer(page, info, 'unsaved-effects-reload', true);
 });
-
