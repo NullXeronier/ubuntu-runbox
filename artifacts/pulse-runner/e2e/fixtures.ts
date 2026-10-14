@@ -7,6 +7,19 @@ type DrawRecord = {
   draws: number;
 };
 
+type StorageAttempt = {
+  operation: 'access' | 'get' | 'set';
+  key: string | null;
+  denied: boolean;
+};
+
+type StorageFault = {
+  accessDenied?: boolean;
+  denyReads?: 'all' | string[];
+  denyWrites?: 'all' | string[];
+  questData?: string;
+};
+
 declare global {
   interface Window {
     __pulseProbe: {
@@ -14,7 +27,67 @@ declare global {
       audio: AudioContext[];
       inputs: { type: string; code: string; trusted: boolean }[];
     };
+    __pulseStorageProbe: {
+      attempts: StorageAttempt[];
+      readStored: (key: string) => string | null;
+    };
   }
+}
+
+/**
+ * Install before navigation, including reloads. Only the browser storage boundary
+ * is faulted; the production tracker, scoring, and input handlers stay untouched.
+ * Native reads let assertions distinguish a session badge from a saved badge.
+ */
+export async function injectStorageFault(page: Page, fault: StorageFault) {
+  await page.addInitScript((options: StorageFault) => {
+    const storage = window.localStorage;
+    const nativeGet = Storage.prototype.getItem;
+    const nativeSet = Storage.prototype.setItem;
+    const probe = window.__pulseStorageProbe = {
+      attempts: [] as StorageAttempt[],
+      readStored: (key: string) => nativeGet.call(storage, key),
+    };
+    // Never overwrite repaired data on reload, or seed a completed badge.
+    if (options.questData !== undefined && nativeGet.call(storage, 'pulse-missions') === null) {
+      nativeSet.call(storage, 'pulse-missions', options.questData);
+    }
+    if (options.accessDenied) {
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get() {
+          probe.attempts.push({ operation: 'access', key: null, denied: true });
+          throw new DOMException('Browser storage access denied', 'SecurityError');
+        },
+      });
+      return;
+    }
+    const denied = (rule: 'all' | string[] | undefined, key: string) =>
+      rule === 'all' || (rule?.includes(key) ?? false);
+    Storage.prototype.getItem = function (key: string) {
+      if (this !== storage) return nativeGet.call(this, key);
+      const blocked = denied(options.denyReads, key);
+      probe.attempts.push({ operation: 'get', key, denied: blocked });
+      if (blocked) throw new DOMException('Browser storage read denied', 'SecurityError');
+      return nativeGet.call(this, key);
+    };
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (this !== storage) return nativeSet.call(this, key, value);
+      const blocked = denied(options.denyWrites, key);
+      probe.attempts.push({ operation: 'set', key, denied: blocked });
+      if (blocked) throw new DOMException('Browser storage write denied', 'QuotaExceededError');
+      return nativeSet.call(this, key, value);
+    };
+  }, fault);
+}
+
+export async function attachStorageEvidence(page: Page, info: TestInfo, label: string) {
+  const evidence = await page.evaluate(() => ({
+    attempts: window.__pulseStorageProbe.attempts,
+    quests: window.__pulseStorageProbe.readStored('pulse-missions'),
+    effects: window.__pulseStorageProbe.readStored('pulse-reduced-effects'),
+  }));
+  await info.attach(`storage-${label}`, { body: JSON.stringify(evidence, null, 2), contentType: 'application/json' });
 }
 
 export const test = base.extend<{ guard: void }>({

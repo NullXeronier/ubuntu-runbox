@@ -38,7 +38,7 @@ executable override takes precedence everywhere.
 | mobile-webgl2 | 375 × 812 | Trusted touchscreen taps on pads | Actual Three.js WebGL2 |
 | mobile-canvas2d | 375 × 812 | Trusted touchscreen taps on pads | Canvas2D compatibility |
 
-All four journeys run in every project (16 test cases). Nothing is skipped
+All ten journeys run in every project (40 test cases). Nothing is skipped
 when WebGL fails. WebGL projects enable Chromium ANGLE/SwiftShader: this is
 software-backed **real WebGL2**, including Three.js startup, GLSL compilation,
 and draw calls, not a CPU projection check. It does not certify physical GPU
@@ -72,6 +72,21 @@ attached to the report; console/uncaught errors fail a test.
    the same partial badge state.
 4. **Reduced effects:** OS reduced-motion default, explicit OFF overriding that
    default after reload, and explicit ON persistence without switching renderer.
+5. **Blocked storage (three journeys):** deny the `localStorage` accessor, deny
+   reads and writes, or allow reads but reject writes with a quota error. Check
+   the menu warning (immediate when reads fail, after earning when only writes
+   fail), HUD warning, and results warning. Earn combo/finish badges with trusted
+   input, keep scoring after the failed save, retry with session-only ALREADY
+   EARNED badges, then reload and require zero saved badges and no saved best.
+6. **Damaged quests (two journeys):** invalid JSON and a valid-looking badge
+   mixed with an unknown badge must warn and award nothing, including on reload.
+   A real-input track finish replaces the damaged document with just the
+   genuinely earned badge, clears the warning, and survives the next reload.
+7. **Effects save failure:** reject only effects writes. Menu and paused
+   controls must visibly warn while immediately changing effects; pause still
+   freezes score/combo and resume accepts the next trusted note. Quest saves
+   continue to work. Reload restores the OS effects default, not the failed
+   preference, while retaining the independently saved quest badge.
 
 The deterministic journeys use Playwright's virtual clock and make the
 `AudioContext.currentTime` getter follow its virtual `performance.now`.
@@ -86,6 +101,17 @@ native-clock test intentionally leaves the audio clock untouched.
 
 Entrance animations are disabled only in clocked tests so they do not hang on
 frozen frames. Reduced-effects tests also run with normal clocks and normal CSS.
+The separate effects-save-failure journey uses the deterministic clock.
+
+Storage faults are installed before application startup and reinstated on each
+reload in that test's isolated browser context. They throw native `DOMException`
+errors only at the storage boundary; they never inject mission progress, scores,
+or game state. The damaged-data cases seed only invalid documents, never earned
+badges, and do not overwrite repaired data on reload. A read-only native storage
+probe records attempted/denied operations and checks the actual saved strings,
+so an in-memory badge cannot be mistaken for successful persistence. These
+reports are attached as `storage-*` JSON evidence alongside session-only results
+screenshots. The same console/uncaught-error guard applies to all fault cases.
 
 ## Results and debugging
 

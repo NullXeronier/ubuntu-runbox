@@ -1,4 +1,4 @@
-import { test, expect, pressButton, checkRenderer, openClockedGame, assertTrustedLaneInput } from './fixtures';
+import { test, expect, pressButton, checkRenderer, openClockedGame, assertTrustedLaneInput, injectStorageFault, attachStorageEvidence } from './fixtures';
 import { RunDriver } from './driver';
 
 test('native-clock renderer/audio startup and visible countdown reach gameplay', async ({ page }, info) => {
@@ -176,4 +176,205 @@ test('reduced-motion default and explicit effects choice survive reload without 
   await page.reload();
   await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'true');
   await checkRenderer(page, info, 'effects-persisted');
+});
+
+const missionIds = ['first-run', 'combo-20', 'perfect-40', 'score-100k'] as const;
+const unreadableQuests = "Saved mission badges could not be read. This session's missions still work; earn a new badge to save again.";
+const sessionOnlyQuests = 'Mission badges cannot be saved in this browser. Progress will remain available for this session.';
+const effectsSaveFailure = 'Your effects preference could not be saved in this browser.';
+
+for (const mode of ['access denied', 'reads and writes denied', 'writes denied'] as const) {
+  test(`storage faults: ${mode} keeps gameplay and badges session-only without claiming persistence`, async ({ page }, info) => {
+    await injectStorageFault(page, mode === 'access denied'
+      ? { accessDenied: true }
+      : { denyReads: mode === 'reads and writes denied' ? 'all' : undefined, denyWrites: 'all' });
+    await openClockedGame(page, info);
+    await expect(page.getByTestId('text-missions-count')).toHaveText('0 / 4 COMPLETE');
+    const initiallyWarns = mode !== 'writes denied';
+    if (initiallyWarns) {
+      await expect(page.getByTestId('text-mission-error')).toBeVisible();
+      await expect(page.getByTestId('text-mission-error')).toHaveText(
+        mode === 'access denied' ? sessionOnlyQuests : unreadableQuests);
+    } else await expect(page.getByTestId('text-mission-error')).toHaveCount(0);
+    await pressButton(page, info, 'button-difficulty-easy');
+    const run = await RunDriver.start(page, info);
+    if (initiallyWarns) await expect(page.getByTestId('text-hud-mission-error')).toBeVisible();
+    else await expect(page.getByTestId('text-hud-mission-error')).toHaveCount(0);
+    await pressButton(page, info, 'button-toggle-missions');
+    const quests = page.getByTestId('list-hud-missions');
+    for (let i = 0; i < 20; i++) await run.hit(i);
+    await expect(page.getByTestId('toast-mission')).toContainText('Chain Reaction');
+    await expect(quests).toContainText('Chain ReactionDONE');
+    await expect(page.getByTestId('text-hud-mission-error')).toBeVisible();
+    await expect(page.getByTestId('text-hud-mission-error')).toHaveText('Quest save failed');
+    // Another trusted hit after the failed write must still score normally.
+    await run.hit(20);
+    await expect(page.getByTestId('text-score')).toHaveText('35,000');
+    await expect(page.getByTestId('button-pause')).toBeVisible();
+    await expect(page.getByTestId('panel-paused')).toHaveCount(0);
+    await assertTrustedLaneInput(page, info);
+    expect(await page.evaluate(() => window.__pulseProbe.audio.map((audio) => audio.state))).toEqual(['running']);
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBeNull();
+
+    await run.finish();
+    await expect(page.getByTestId('text-final-score')).toHaveText('35,000');
+    await expect(page.getByTestId('text-perfect')).toHaveText('21');
+    await expect(page.getByTestId('text-maxcombo')).toHaveText('21');
+    await expect(page.getByTestId('text-mission-error')).toBeVisible();
+    await expect(page.getByTestId('text-mission-error')).toHaveText(sessionOnlyQuests);
+    await expect(page.getByTestId('text-game-error')).toHaveText(
+      'Your score is shown below, but this browser could not save your personal best.');
+    for (const id of ['first-run', 'combo-20']) {
+      await expect(page.getByTestId(`badge-new-${id}`)).toHaveText('NEWLY EARNED');
+    }
+    for (const id of ['perfect-40', 'score-100k']) {
+      await expect(page.getByTestId(`result-mission-${id}`)).toContainText('INCOMPLETE');
+    }
+    const attempts = await page.evaluate(() => window.__pulseStorageProbe.attempts);
+    if (mode === 'access denied') expect(attempts.some((a) => a.operation === 'access' && a.denied)).toBe(true);
+    else {
+      expect(attempts.some((a) => a.operation === 'get' && a.key === 'pulse-missions' &&
+        a.denied === (mode === 'reads and writes denied'))).toBe(true);
+      expect(attempts.some((a) => a.operation === 'set' && a.key === 'pulse-missions' && a.denied)).toBe(true);
+    }
+    await attachStorageEvidence(page, info, 'failed-quest-saves');
+    await info.attach('session-only-results', { body: await page.screenshot(), contentType: 'image/png' });
+
+    // Retry preserves earned badges in memory, not their NEWLY EARNED flags.
+    const retry = await RunDriver.start(page, info, 'button-retry');
+    await expect(page.getByTestId('text-hud-mission-error')).toBeVisible();
+    await pressButton(page, info, 'button-toggle-missions');
+    await expect(page.getByTestId('list-hud-missions')).toContainText('Chain ReactionDONE');
+    await expect(page.getByTestId('list-hud-missions')).toContainText('Precision Protocol0/40');
+    await expect(page.getByTestId('toast-mission')).toHaveCount(0);
+    await retry.finish();
+    for (const id of ['first-run', 'combo-20']) {
+      await expect(page.getByTestId(`badge-earned-${id}`)).toHaveText('ALREADY EARNED');
+      await expect(page.getByTestId(`badge-new-${id}`)).toHaveCount(0);
+    }
+    await pressButton(page, info, 'button-menu');
+    await expect(page.getByTestId('text-missions-count')).toHaveText('2 / 4 COMPLETE');
+    await expect(page.getByTestId('text-mission-error')).toBeVisible();
+    await expect(page.getByTestId('text-mission-error')).toHaveText(sessionOnlyQuests);
+    await page.reload();
+    await expect(page.getByTestId('text-missions-count')).toHaveText('0 / 4 COMPLETE');
+    for (const id of missionIds) await expect(page.getByTestId(`badge-complete-${id}`)).toHaveCount(0);
+    await expect(page.getByTestId('text-best')).toHaveText('PERSONAL BEST --');
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBeNull();
+    if (initiallyWarns) await expect(page.getByTestId('text-mission-error')).toBeVisible();
+    else await expect(page.getByTestId('text-mission-error')).toHaveCount(0);
+    await attachStorageEvidence(page, info, 'unsaved-after-reload');
+    await checkRenderer(page, info, 'storage-fault-reload', true);
+  });
+}
+
+for (const damaged of [
+  { name: 'invalid JSON', raw: '{"version":1,"completed":' },
+  { name: 'unknown badge mixed with a known badge', raw: '{"version":1,"completed":["combo-20","unknown-badge"]}' },
+]) {
+  test(`storage faults: ${damaged.name} warns without awarding badges and recovers only after a real completion`, async ({ page }, info) => {
+    await injectStorageFault(page, { questData: damaged.raw });
+    await openClockedGame(page, info);
+    await expect(page.getByTestId('text-mission-error')).toBeVisible();
+    await expect(page.getByTestId('text-mission-error')).toHaveText(unreadableQuests);
+    await expect(page.getByTestId('text-missions-count')).toHaveText('0 / 4 COMPLETE');
+    for (const id of missionIds) await expect(page.getByTestId(`badge-complete-${id}`)).toHaveCount(0);
+    // Simply opening/reloading must not silently replace damaged data or award
+    // the valid-looking portion of an invalid document.
+    await page.reload();
+    await expect(page.getByTestId('text-missions-count')).toHaveText('0 / 4 COMPLETE');
+    await expect(page.getByTestId('text-mission-error')).toHaveText(unreadableQuests);
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBe(damaged.raw);
+    await pressButton(page, info, 'button-difficulty-easy');
+    const run = await RunDriver.start(page, info);
+    await expect(page.getByTestId('text-hud-mission-error')).toBeVisible();
+    await run.hit(0);
+    await expect(page.getByTestId('text-score')).toHaveText('1,000');
+    await expect(page.getByTestId('text-hud-mission-error')).toBeVisible();
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBe(damaged.raw);
+    await assertTrustedLaneInput(page, info);
+    await attachStorageEvidence(page, info, 'damaged-quests');
+    await run.finish();
+    await expect(page.getByTestId('text-final-score')).toHaveText('1,000');
+    await expect(page.getByTestId('badge-new-first-run')).toHaveText('NEWLY EARNED');
+    for (const id of missionIds.filter((id) => id !== 'first-run')) {
+      await expect(page.getByTestId(`result-mission-${id}`)).toContainText('INCOMPLETE');
+    }
+    await expect(page.getByTestId('text-mission-error')).toHaveCount(0);
+    const repaired = await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'));
+    expect(JSON.parse(repaired!)).toEqual({ version: 1, completed: ['first-run'] });
+    await attachStorageEvidence(page, info, 'repaired-quests');
+    await pressButton(page, info, 'button-menu');
+    await page.reload();
+    await expect(page.getByTestId('text-missions-count')).toHaveText('1 / 4 COMPLETE');
+    await expect(page.getByTestId('badge-complete-first-run')).toHaveText('DONE');
+    await expect(page.getByTestId('text-mission-error')).toHaveCount(0);
+    for (const id of missionIds.filter((id) => id !== 'first-run')) {
+      await expect(page.getByTestId(`badge-complete-${id}`)).toHaveCount(0);
+    }
+    await checkRenderer(page, info, 'repaired-quests-reload', true);
+  });
+}
+
+test('storage faults: effects save failure warns but applies for the session without breaking gameplay or quest saves', async ({ page }, info) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await injectStorageFault(page, { denyWrites: ['pulse-reduced-effects'] });
+  await openClockedGame(page, info);
+  await pressButton(page, info, 'button-difficulty-easy');
+  await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'true');
+  await pressButton(page, info, 'switch-reduced-effects');
+  await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'false');
+  await expect(page.locator('.reduce-fx')).toHaveCount(0);
+  await expect(page.getByTestId('text-error')).toBeVisible();
+  await expect(page.getByTestId('text-error')).toHaveText(effectsSaveFailure);
+  await expect(page.getByTestId('text-mission-error')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-reduced-effects'))).toBeNull();
+
+  const run = await RunDriver.start(page, info);
+  await expect(page.locator('.reduce-fx')).toHaveCount(0);
+  await run.hit(0);
+  await run.hit(1);
+  await pressButton(page, info, 'button-pause');
+  await pressButton(page, info, 'switch-reduced-effects');
+  await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('.reduce-fx')).toHaveCount(1);
+  await expect(page.getByTestId('text-game-error')).toBeVisible();
+  await expect(page.getByTestId('text-game-error')).toHaveText(effectsSaveFailure);
+  await pressButton(page, info, 'switch-reduced-effects');
+  await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'false');
+  await expect(page.locator('.reduce-fx')).toHaveCount(0);
+  await expect(page.getByTestId('text-game-error')).toHaveText(effectsSaveFailure);
+  await page.clock.fastForward(5_000);
+  await expect(page.getByTestId('panel-paused')).toBeVisible();
+  await expect(page.getByTestId('text-score')).toHaveText('2,000');
+  await expect(page.getByTestId('text-combo')).toHaveText('2');
+  await pressButton(page, info, 'button-resume');
+  run.shiftForPause(5_000);
+  await run.hit(2);
+  await expect(page.getByTestId('text-score')).toHaveText('3,000');
+  await expect(page.getByTestId('text-hud-mission-error')).toHaveCount(0);
+  await assertTrustedLaneInput(page, info);
+  await run.finish();
+  await expect(page.getByTestId('text-final-score')).toHaveText('3,000');
+  await expect(page.getByTestId('badge-new-first-run')).toHaveText('NEWLY EARNED');
+  await expect(page.getByTestId('text-mission-error')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__pulseStorageProbe.attempts
+    .filter((a) => a.operation === 'set' && a.key === 'pulse-reduced-effects'))).toEqual([
+    { operation: 'set', key: 'pulse-reduced-effects', denied: true },
+    { operation: 'set', key: 'pulse-reduced-effects', denied: true },
+    { operation: 'set', key: 'pulse-reduced-effects', denied: true },
+  ]);
+  expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-reduced-effects'))).toBeNull();
+  await attachStorageEvidence(page, info, 'effects-only-save-failure');
+  await pressButton(page, info, 'button-menu');
+  await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'false');
+  await page.reload();
+  // Failed OFF was never saved: return to the OS reduced-motion default,
+  // while the independently saved quest badge really does survive.
+  await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('.reduce-fx')).toHaveCount(1);
+  await expect(page.getByTestId('text-error')).toHaveCount(0);
+  await expect(page.getByTestId('text-missions-count')).toHaveText('1 / 4 COMPLETE');
+  await expect(page.getByTestId('badge-complete-first-run')).toHaveText('DONE');
+  await checkRenderer(page, info, 'unsaved-effects-reload', true);
 });

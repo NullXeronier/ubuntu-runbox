@@ -46,3 +46,57 @@ Runtime: Nix-wrapped Chromium 138.0.7204.100 on Linux.
 Also passed: all 14 mission/lifecycle/projection unit tests, game typecheck,
 browser-harness typecheck, a frozen-lockfile install, and production Vite build
 with the required `PORT` and `BASE_PATH` set.
+
+## Storage-failure browser regressions — 2026-10-14
+
+Added six storage-failure journeys per configuration, expanding the suite to
+40 matrix cases. The targeted storage run passed **24/24**, with no skips,
+retries, flaky results, uncaught JavaScript errors, or console errors, in
+119.3 seconds:
+
+```sh
+pnpm --filter @workspace/pulse-runner run test:e2e --grep 'storage faults:'
+```
+
+| Configuration | Accessor denied | Reads/writes denied | Writes denied | Invalid JSON | Invalid badge list | Effects write denied |
+| --- | --- | --- | --- | --- | --- | --- |
+| Desktop WebGL2 / keyboard | PASS | PASS | PASS | PASS | PASS | PASS |
+| Desktop Canvas2D / keyboard | PASS | PASS | PASS | PASS | PASS | PASS |
+| Mobile WebGL2 / touch | PASS | PASS | PASS | PASS | PASS | PASS |
+| Mobile Canvas2D / touch | PASS | PASS | PASS | PASS | PASS | PASS |
+
+- Blocked-storage checks earned combo and finish badges with trusted lane
+  inputs, continued scoring after a denied write, and showed warnings in the
+  menu, HUD, and results. Badges remained ALREADY EARNED on retry in the same
+  session, but a real reload showed zero badges and no saved personal best.
+  Native storage reads confirmed that the failed writes had stored nothing.
+- Damaged JSON and an invalid list containing both a known and unknown badge
+  awarded nothing, warned before and after reload, and were not silently
+  overwritten at startup. A genuine track finish saved only First Contact,
+  cleared the warning, and retained only that badge on reload.
+- Effects-only write failures visibly warned in menu and pause. Changes applied
+  immediately for the session without resuming pause, altering score/combo, or
+  preventing the next trusted hit after resume. Quest saves still worked.
+  Reload restored the OS reduced-motion default rather than the unsaved choice.
+- All configurations required actual draw calls from their expected renderer,
+  including after reload. The normal app preview also rendered successfully
+  using its compatibility renderer. No production gameplay code was changed.
+
+The first full-suite attempt passed all 16 unchanged baseline cases. The new
+blocked-storage cases stopped at an incorrect test expectation of 34,000 points
+for 21 perfect hits; the correct combo-multiplied score is 35,000. That attempt
+hit the five-minute command limit before its final storage cases. After fixing
+only that expectation, all 24 storage cases were run to completion as above.
+Together the two attempts cover all 40 cases; this is not a claim of a single
+uninterrupted 40-case run.
+
+Also passed in this task: all 14 unit tests, game typecheck, browser-harness
+typecheck, and a clean managed workflow startup. Native-clock startup checks in
+the unchanged baseline still use unmodified audio time; storage fault journeys
+use the deterministic clock and do not certify audible hardware timing.
+
+Current JSON/HTML reports, `storage-*` operation/saved-value attachments,
+renderer evidence, and session-only results screenshots are in the ignored
+`generated-artifacts/pulse-runner/` directory. The interrupted initial attempt's
+available traces/screenshots are retained separately in
+`generated-artifacts/pulse-runner-storage-initial-matrix/`.
