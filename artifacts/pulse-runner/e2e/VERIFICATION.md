@@ -1,6 +1,20 @@
 # Browser regression verification — 2026-10-14
 
-## Cross-engine extension: implemented, execution blocked on this host
+## Current scope: Chromium and Firefox; Safari/WebKit excluded
+
+The user explicitly excluded Safari/WebKit. The required release matrix now
+contains 32 cases in eight Chromium/Firefox projects. The initial Ubuntu run
+was cancelled during WebKit execution after the scope change, not counted as a
+passing release. Its completed Chromium/Firefox cases had 31 passes and one
+test-harness failure: a 100 ms `clock.pauseAt` target expired before the protocol
+command arrived. All native-clock startup and full quest/badge journeys passed.
+The harness now uses a full test-timeout virtual-time margin before any run
+starts; a new 32-case run is required to certify the revised suite.
+
+GitHub token authentication successfully uploaded the test branch and started
+the Ubuntu workflow. The earlier connection blocker is resolved.
+
+## Historical investigation (before scope change)
 
 ### Linux runner follow-up
 

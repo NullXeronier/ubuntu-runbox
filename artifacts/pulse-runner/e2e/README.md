@@ -4,7 +4,7 @@ Run from the workspace root:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm --filter @workspace/pulse-runner exec playwright install chromium firefox webkit
+pnpm --filter @workspace/pulse-runner exec playwright install chromium firefox
 pnpm --filter @workspace/pulse-runner run test:unit
 pnpm --filter @workspace/pulse-runner run test:e2e:types
 pnpm --filter @workspace/pulse-runner run test:e2e
@@ -21,30 +21,29 @@ URL **with a trailing slash**, including any artifact base path. For example,
 navigation and will not start a replacement server in this mode. If Chromium
 is supplied by the environment, `PULSE_E2E_CHROMIUM` can name its executable.
 On supported Linux CI hosts, install Playwright's documented OS libraries for
-all three engines as well as downloading their version-matched browsers:
+both required engines as well as downloading their version-matched browsers:
 
 ```sh
-pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox webkit
+pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox
 CI=1 pnpm --filter @workspace/pulse-runner run test:e2e
 ```
 
 The lockfile currently resolves Playwright 1.64.0: its bundled engines are
-Chromium 156.0.8078.4, Firefox 157.0 (revision 1555), and WebKit 27.2 (revision
-2370; OS-specific revisions can differ). Browser-version attachments record
+Chromium 156.0.8078.4 and Firefox 157.0 (revision 1555). Browser-version attachments record
 what actually ran, including any system Chromium override. Do not reuse an
 older Nix Playwright bundle with the newer driver: browser protocols differ.
-WebKit is Safari's engine, **not** branded Safari or a real iPhone.
+Safari/WebKit is explicitly excluded at the user's request. No Safari or iPhone coverage is claimed.
 
 On Replit/NixOS the config automatically uses the `chromium` installed by this
 project's Nix packages, with its runtime-library wrapper. A downloaded Linux
 Playwright binary alone can fail to find `libglib-2.0.so.0` on NixOS. Outside
 Replit the default remains Playwright's version-matched Chromium; the explicit
 executable override takes precedence everywhere. This Chromium exception must
-not leak into Firefox/WebKit launch options. Firefox and WebKit use the
-version-matched bundled executables, not ordinary system Firefox/Safari.
+not leak into Firefox launch options. Firefox uses the
+version-matched bundled executable, not ordinary system Firefox.
 
 Downloading these bundles does not install their runtime libraries on NixOS.
-If Firefox/WebKit cannot launch or create a page, the result is a browser setup
+If Firefox cannot launch or create a page, the result is a browser setup
 failure, not an application regression, and not passing coverage. Run the same
 matrix on a supported host with its dependencies; never substitute an older
 incompatible browser or remove a failing project from the release command.
@@ -64,16 +63,16 @@ and temporary socket are cleaned up on exit; the runner does not alter a
 personal desktop's default audio server.
 
 The release script accepts no test filters or unsupported-capability skips.
-It uses bundled Chromium as well as bundled Firefox/WebKit, starts the game
+It uses bundled Chromium and Firefox, starts the game
 from the checkout, and rejects partial reports, retries, skipped cases or
-missing native-audio/renderer/trusted-input evidence. All 48 cases must pass.
+missing native-audio/renderer/trusted-input evidence. All 32 cases must pass.
 Any missing Mesa/WebGL/native-audio capability is still a hard failure.
 
 On a dedicated Ubuntu 24.04 host, install Node 24 and pnpm 10.26.1, then:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox webkit
+pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox
 sudo apt-get update
 sudo apt-get install -y xvfb xauth mesa-utils libgl1-mesa-dri libegl-mesa0 pulseaudio pulseaudio-utils
 bash scripts/run-pulse-browser-matrix-linux.sh
@@ -84,7 +83,7 @@ logs for 14 days, including on failure. Runtime logs are under
 `generated-artifacts/pulse-runner-linux/`; browser evidence remains under
 `generated-artifacts/pulse-runner/`. Adding a workflow is not execution evidence:
 the repository must be connected and the actual runner result inspected before
-claiming Firefox/WebKit verification.
+claiming Firefox verification.
 
 ## Required matrix
 
@@ -98,21 +97,17 @@ claiming Firefox/WebKit verification.
 | firefox-desktop-canvas2d | 1280 × 800 | D/F/J/K and arrow keys | Canvas2D compatibility |
 | firefox-mobile-webgl2 | 375 × 812 | Trusted touchscreen taps on pads | Actual Three.js WebGL2 |
 | firefox-mobile-canvas2d | 375 × 812 | Trusted touchscreen taps on pads | Canvas2D compatibility |
-| webkit-desktop-webgl2 | 1280 × 800 | D/F/J/K and arrow keys | Actual Three.js WebGL2 |
-| webkit-desktop-canvas2d | 1280 × 800 | D/F/J/K and arrow keys | Canvas2D compatibility |
-| webkit-mobile-webgl2 | 375 × 812 | Trusted touchscreen taps on pads | Actual Three.js WebGL2 |
-| webkit-mobile-canvas2d | 375 × 812 | Trusted touchscreen taps on pads | Canvas2D compatibility |
 
 Firefox's mobile rows use a narrow viewport and native trusted touch;
 `isMobile` is intentionally off because Playwright Firefox does not implement
 mobile layout emulation. These rows do not certify Android Firefox or hardware.
 
-All four journeys run in every project (48 test cases). Nothing is silently
+All four journeys run in every project (32 test cases). Nothing is silently
 skipped or downgraded when WebGL fails. Chromium WebGL projects enable
 ANGLE/SwiftShader: this is
 software-backed **real WebGL2**, including Three.js startup, GLSL compilation,
 and draw calls, not a CPU projection check. It does not certify physical GPU
-drivers or device audio latency. Firefox/WebKit request their native WebGL2,
+drivers or device audio latency. Firefox requests its native WebGL2,
 without Chromium flags or executable overrides.
 
 Every compatibility project uses explicit fault injection: an init script
@@ -197,7 +192,7 @@ frozen frames. Reduced-effects tests also run with normal clocks and normal CSS.
 pnpm --filter @workspace/pulse-runner run test:e2e:report
 # Focus on a particular renderer/device without changing the suite:
 pnpm --filter @workspace/pulse-runner run test:e2e --project=mobile-webgl2
-pnpm --filter @workspace/pulse-runner run test:e2e --project=firefox-desktop-webgl2 --project=webkit-mobile-canvas2d
+pnpm --filter @workspace/pulse-runner run test:e2e --project=firefox-desktop-webgl2 --project=firefox-mobile-canvas2d
 # Local-only explicit unsupported capability reporting; not release evidence:
 PULSE_E2E_ALLOW_UNSUPPORTED=1 pnpm --filter @workspace/pulse-runner run test:e2e
 ```

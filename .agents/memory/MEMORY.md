@@ -1,3 +1,4 @@
 - [Tunnel rendering verification](tunnel-rendering.md) — the capture browser can lack WebGL2; preserve the primary Three.js renderer and keep the compatibility path playable.
 - [Preview discovery dependencies](preview-discovery.md) — prefer native file discovery for the fixed preview scan; do not reintroduce an unpatched glob-parser dependency.
 - [Calibration limits](calibration-limits.md) — tap-derived offsets are comfort estimates, not hardware-latency measurements; software checks cannot verify Bluetooth output.
+- [Browser verification scope](browser-verification-scope.md) — user explicitly excludes Safari/WebKit from the requested browser checks.
