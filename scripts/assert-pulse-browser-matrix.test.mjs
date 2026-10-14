@@ -4,7 +4,7 @@ import { assertBrowserMatrix } from './assert-pulse-browser-matrix.mjs';
 
 function completeReport() {
   const specs = [];
-  for (const engine of ['', 'firefox-', 'webkit-']) {
+  for (const engine of ['', 'firefox-']) {
     for (const device of ['desktop', 'mobile']) {
       for (const renderer of ['webgl2', 'canvas2d']) {
         for (const title of ['native-clock startup', 'real lane inputs quest journey', 'pause/resume resets', 'reduced-motion settings']) {
@@ -35,6 +35,7 @@ test('accepts only the complete passing matrix with evidence', () => {
 });
 
 for (const [name, mutate] of [
+  ['out-of-scope WebKit project', (r) => { r.suites[0].suites[0].specs[0].tests[0].projectName = 'webkit-desktop-webgl2'; }],
   ['omitted project', (r) => { r.suites[0].suites[0].specs.splice(0, 4); }],
   ['skipped test', (r) => { r.suites[0].suites[0].specs[0].tests[0].results[0].status = 'skipped'; }],
   ['expected failure', (r) => { r.suites[0].suites[0].specs[0].tests[0].expectedStatus = 'failed'; }],

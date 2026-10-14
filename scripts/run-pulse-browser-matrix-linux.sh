@@ -15,7 +15,7 @@ for command in pnpm node xvfb-run glxinfo pulseaudio pactl; do
   fi
 done
 if [[ $# -ne 0 ]]; then
-  echo "The release runner accepts no filters: all 48 cases must execute." >&2
+  echo "The release runner accepts no filters: all 32 Chromium/Firefox cases must execute." >&2
   exit 1
 fi
 
@@ -71,7 +71,7 @@ export PULSE_LINUX_EVIDENCE_DIR="$output"
   pnpm --filter @workspace/pulse-runner exec playwright --version
 } > "$output/versions.txt"
 
-# Headed Firefox/WebKit use real Mesa GL under Xvfb. The existing Chromium
+# Headed Firefox uses real Mesa GL under Xvfb. The existing Chromium
 # project still explicitly requests real ANGLE/SwiftShader WebGL2.
 xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX +render -noreset" \
   bash -c '

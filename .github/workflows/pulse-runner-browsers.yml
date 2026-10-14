@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   browsers:
-    name: Chromium, Firefox and WebKit / Linux
+    name: Chromium and Firefox / Linux (Safari excluded)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -54,7 +54,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install version-matched browsers and Linux runtime
         run: |
-          pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox webkit
+          pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox
           sudo apt-get update
           sudo apt-get install -y xvfb xauth mesa-utils libgl1-mesa-dri libegl-mesa0 pulseaudio pulseaudio-utils
       - name: Check game and browser harness
@@ -63,7 +63,7 @@ jobs:
           pnpm --filter @workspace/pulse-runner run test:e2e:types
           pnpm --filter @workspace/pulse-runner run test:unit
           node --test scripts/assert-pulse-browser-matrix.test.mjs
-      - name: Run all 48 browser cases with native audio clocks and explicit renderers
+      - name: Run all 32 Chromium and Firefox cases with explicit renderer evidence
         run: bash scripts/run-pulse-browser-matrix-linux.sh
       - name: Retain browser evidence even when setup or assertions fail
         if: ${{ always() }}

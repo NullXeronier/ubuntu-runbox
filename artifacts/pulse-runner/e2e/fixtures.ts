@@ -276,7 +276,10 @@ export async function openClockedGame(page: Page, info: TestInfo) {
   // Animation scheduling is not the feature under test. Keep UI stable while
   // time is paused without changing the game's reduced-effects preference.
   await page.addStyleTag({ content: '*,*::before,*::after{animation:none!important;transition:none!important}' });
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
+  // pauseAt jumps immediately; this is virtual time, not a real-time wait.
+  // Use the full test-timeout margin so a slow CI protocol round-trip cannot
+  // turn the sampled target into a timestamp in the past. No run has started.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000));
 }
 
 export async function assertTrustedLaneInput(page: Page, info: TestInfo) {

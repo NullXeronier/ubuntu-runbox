@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 export function assertBrowserMatrix(report) {
   const projects = new Map();
-  for (const engine of ['', 'firefox-', 'webkit-']) {
+  for (const engine of ['', 'firefox-']) {
     for (const device of ['desktop', 'mobile']) {
       for (const renderer of ['webgl2', 'canvas2d']) {
         projects.set(`${engine}${device}-${renderer}`, []);
@@ -52,5 +52,5 @@ export function assertBrowserMatrix(report) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   assertBrowserMatrix(JSON.parse(readFileSync(process.argv[2], 'utf8')));
-  console.log('Release evidence complete: 48 passing cases, 12 projects, no skips or retries.');
+  console.log('Release evidence complete: 32 passing cases, 8 projects, no skips or retries. Safari/WebKit excluded by scope.');
 }

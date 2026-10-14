@@ -16,7 +16,8 @@ if (process.env.CI && process.env.PULSE_E2E_ALLOW_UNSUPPORTED === '1') {
   throw new Error('PULSE_E2E_ALLOW_UNSUPPORTED is diagnostic-only and forbidden in CI.');
 }
 
-const projects: Project[] = (['chromium', 'firefox', 'webkit'] as const).flatMap((browserName) =>
+// Safari/WebKit is excluded from the requested release scope.
+const projects: Project[] = (['chromium', 'firefox'] as const).flatMap((browserName) =>
   (['desktop', 'mobile'] as const).flatMap((device) =>
     (['webgl2', 'canvas2d'] as const).map((renderer) => ({
       // Preserve the original Chromium project names for existing commands.
