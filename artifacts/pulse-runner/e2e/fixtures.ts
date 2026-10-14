@@ -156,6 +156,15 @@ export const test = base.extend<{ guard: void }>({
 
 export { expect };
 
+/** Model a delayed storage notification without changing native stored data. */
+export async function delayBestNotifications(page: Page) {
+  await page.addInitScript(() => {
+    window.addEventListener('storage', (event) => {
+      if (event.key?.startsWith('pulse-best:')) event.stopImmediatePropagation();
+    }, true);
+  });
+}
+
 export async function pressButton(page: Page, info: TestInfo, id: string) {
   const button = page.getByTestId(id);
   // CSS entrance animation is disabled in deterministic tests. Force bypasses

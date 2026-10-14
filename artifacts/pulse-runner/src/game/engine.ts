@@ -77,11 +77,12 @@ function makeNotes(track: Track, difficulty: Difficulty): Note[] {
   return notes;
 }
 
-function readBest(track: Track, difficulty: Difficulty): number {
+function readBest(track: Track, difficulty: Difficulty, requireReadable = false): number {
   try {
     const score = Number(localStorage.getItem(`pulse-best:${track.id}:${difficulty}`));
     return Number.isFinite(score) && score > 0 ? score : 0;
-  } catch {
+  } catch (error) {
+    if (requireReadable) throw error;
     return 0;
   }
 }
@@ -145,7 +146,17 @@ export class RhythmGame {
       window.addEventListener("blur", () => this.pause());
       window.addEventListener("storage", (event) => {
         this.missions.handleStorage(event);
-        this.update({});
+        const { track, difficulty, best } = this.snapshot;
+        let storedBest = 0;
+        try {
+          if (event.storageArea === window.localStorage &&
+            event.key === `pulse-best:${track.id}:${difficulty}`) {
+            storedBest = readBest(track, difficulty);
+          }
+        } catch {
+          // Storage access may be blocked even while receiving an event.
+        }
+        this.update({ best: Math.max(best, storedBest) });
       });
     }
   }
@@ -349,9 +360,12 @@ export class RhythmGame {
   private finish() {
     this.audio.stop();
     this.cancelFrame();
-    const best = Math.max(this.snapshot.best, this.snapshot.score);
+    let best = Math.max(this.snapshot.best, this.snapshot.score);
     let error: string | null = null;
     try {
+      // Re-read at the write boundary: storage events may not have arrived yet.
+      // If reading is denied, do not overwrite an unknown, possibly higher best.
+      best = Math.max(best, readBest(this.snapshot.track, this.snapshot.difficulty, true));
       localStorage.setItem(`pulse-best:${this.snapshot.track.id}:${this.snapshot.difficulty}`, String(best));
     } catch {
       error = "Your score is shown below, but this browser could not save your personal best.";

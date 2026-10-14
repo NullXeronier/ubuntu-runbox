@@ -1,5 +1,57 @@
-import { test, expect, pressButton, checkRenderer, openClockedGame, assertTrustedLaneInput, injectStorageFault, attachStorageEvidence } from './fixtures';
+import { test, expect, pressButton, checkRenderer, openClockedGame, assertTrustedLaneInput, injectStorageFault, attachStorageEvidence, delayBestNotifications } from './fixtures';
 import { RunDriver, notes } from './driver';
+
+for (const delayed of [false, true]) {
+  test(`personal best: two open pages preserve the higher score with ${delayed ? 'delayed' : 'live'} notifications`, async ({ page, context }, info) => {
+    const other = await context.newPage();
+    if (delayed) await delayBestNotifications(page);
+    await openClockedGame(other, info);
+    await openClockedGame(page, info);
+    await pressButton(page, info, 'button-difficulty-easy');
+    const lower = await RunDriver.start(page, info);
+    await lower.hit(0);
+    await pressButton(page, info, 'button-pause');
+    const pausedAt = await page.evaluate(() => performance.now());
+
+    await other.bringToFront();
+    await pressButton(other, info, 'button-difficulty-easy');
+    const higher = await RunDriver.start(other, info);
+    for (let i = 0; i < 3; i++) await higher.hit(i);
+    await higher.finish();
+    await expect(other.getByTestId('text-final-score')).toHaveText('3,000');
+
+    await page.bringToFront();
+    lower.shiftForPause(await page.evaluate(() => performance.now()) - pausedAt);
+    await pressButton(page, info, 'button-resume');
+    await lower.finish();
+    await expect(page.getByTestId('text-final-score')).toHaveText('1,000');
+    await expect(page.getByTestId('text-results-best')).toHaveText('3,000');
+    await expect(page.getByTestId('text-new-best')).toHaveCount(0);
+    expect(await page.evaluate(() => localStorage.getItem('pulse-best:neon-drift:easy'))).toBe('3000');
+    await pressButton(page, info, 'button-menu');
+    await expect(page.getByTestId('text-best')).toContainText('3,000');
+    await page.reload();
+    await pressButton(page, info, 'button-difficulty-easy');
+    await expect(page.getByTestId('text-best')).toContainText('3,000');
+    await other.close();
+  });
+}
+
+test('personal best: external saves update an already open menu for the matching difficulty', async ({ page, context }, info) => {
+  const other = await context.newPage();
+  await openClockedGame(page, info);
+  await pressButton(page, info, 'button-difficulty-easy');
+  await openClockedGame(other, info);
+  await pressButton(other, info, 'button-difficulty-easy');
+  const run = await RunDriver.start(other, info);
+  await run.hit(0);
+  await run.finish();
+  await expect(page.getByTestId('text-best')).toHaveText('PERSONAL BEST 1,000');
+  await page.bringToFront();
+  await pressButton(page, info, 'button-difficulty-hard');
+  await expect(page.getByTestId('text-best')).toHaveText('PERSONAL BEST --');
+  await other.close();
+});
 
 test('native-clock renderer/audio startup and visible countdown reach gameplay', async ({ page }, info) => {
   await page.goto('./');
