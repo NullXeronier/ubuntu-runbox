@@ -1,4 +1,5 @@
 import { test as base, expect, type Page, type TestInfo } from '@playwright/test';
+import { checkCapabilities } from './capabilities';
 
 type DrawRecord = {
   kind: string;
@@ -13,25 +14,36 @@ declare global {
       contexts: DrawRecord[];
       audio: AudioContext[];
       inputs: { type: string; code: string; trusted: boolean }[];
+      deniedContexts: string[];
+      forcedCanvas: boolean;
     };
   }
 }
 
 export const test = base.extend<{ guard: void }>({
-  guard: [async ({ page }, use, info) => {
+  guard: [async ({ page, browser }, use, info) => {
+    await checkCapabilities(page, browser, info);
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     page.on('console', (message) => {
       if (message.type() === 'error') errors.push(message.text());
     });
-    await page.addInitScript(() => {
+    await page.addInitScript(({ forcedCanvas }) => {
       const probe = window.__pulseProbe = {
         contexts: [] as DrawRecord[],
         audio: [] as AudioContext[],
         inputs: [] as { type: string; code: string; trusted: boolean }[],
+        deniedContexts: [] as string[],
+        forcedCanvas,
       };
       const native = HTMLCanvasElement.prototype.getContext;
       HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...args: unknown[]) {
+        // Cross-engine fault injection at the browser API boundary, never an
+        // app flag or fake renderer. WebGL projects never install this denial.
+        if (forcedCanvas && ['webgl', 'webgl2', 'experimental-webgl'].includes(kind)) {
+          probe.deniedContexts.push(kind);
+          return null;
+        }
         const context = (native as (kind: string, ...args: unknown[]) => RenderingContext | null).call(this, kind, ...args);
         if (context && !probe.contexts.some((record) => record.context === context)) {
           const record = { kind, canvas: this, context, draws: 0 };
@@ -63,7 +75,7 @@ export const test = base.extend<{ guard: void }>({
       window.addEventListener('pointerdown', (event) => {
         probe.inputs.push({ type: event.pointerType, code: (event.target as HTMLElement).dataset.testid ?? '', trusted: event.isTrusted });
       }, true);
-    });
+    }, { forcedCanvas: info.project.metadata.renderer === 'canvas2d' });
     await use();
     if (!page.isClosed()) {
       await info.attach('browser-errors', { body: JSON.stringify(errors, null, 2), contentType: 'application/json' });
@@ -113,6 +125,7 @@ export async function checkRenderer(page: Page, info: TestInfo, label: string, c
   expect(report[0]!.width).toBeGreaterThan(0);
   expect(report[0]!.height).toBeGreaterThan(0);
   if (expected === 'webgl2') {
+    expect(await page.evaluate(() => window.__pulseProbe.forcedCanvas)).toBe(false);
     expect(report[0]!.version).toContain('WebGL 2.0');
     expect(report[0]!.lost).toBe(false);
     expect(report[0]!.error).toBe(0);
@@ -121,13 +134,18 @@ export async function checkRenderer(page: Page, info: TestInfo, label: string, c
   } else {
     expect(report[0]!.softwareCanvas).toBe(true);
     await expect(page.getByTestId('text-compat-renderer')).toBeVisible();
-    // Prove this is a genuine unavailable-context fallback, not a UI label.
+    // Prove real context rejection reached the app's fallback, not just a label.
+    expect(await page.evaluate(() => window.__pulseProbe.forcedCanvas)).toBe(true);
+    expect(await page.evaluate(() => window.__pulseProbe.deniedContexts)).toContain('webgl2');
     expect(await page.evaluate(() => document.createElement('canvas').getContext('webgl2') === null)).toBe(true);
   }
-  const summary = `${info.project.name}: ${expected}; ${report[0]!.draws} real draw calls (${label})`;
+  const summary = `${info.project.name}: ${expected}; ${info.project.metadata.contextPolicy}; ${report[0]!.draws} real draw calls (${label})`;
   console.log(summary);
   info.annotations.push({ type: 'renderer', description: summary });
-  await info.attach(`renderer-${label}`, { body: JSON.stringify(report, null, 2), contentType: 'application/json' });
+  await info.attach(`renderer-${label}`, {
+    body: JSON.stringify({ contextPolicy: info.project.metadata.contextPolicy, canvases: report }, null, 2),
+    contentType: 'application/json',
+  });
 }
 
 /**
@@ -171,4 +189,8 @@ export async function assertTrustedLaneInput(page: Page, info: TestInfo) {
   expect(events.some((event) => event.trusted && (type === 'touch'
     ? event.type === 'touch' && event.code.startsWith('pad-lane-')
     : event.type === 'keyboard' && ['KeyD', 'KeyF', 'KeyJ', 'KeyK', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'ArrowRight'].includes(event.code)))).toBe(true);
+  await info.attach('trusted-lane-input', {
+    body: JSON.stringify({ expected: type, events }, null, 2),
+    contentType: 'application/json',
+  });
 }
