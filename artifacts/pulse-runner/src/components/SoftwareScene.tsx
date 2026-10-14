@@ -1,18 +1,22 @@
 import { useEffect, useRef } from 'react';
 import { game } from '@/game/engine';
+import { TUNNEL_RADIUS as R, LANE_STEP as STEP, laneAngle as laneA, CAMERA_Y as camY, CAMERA_Z as camZ, CAMERA_FOV, CAMERA_PITCH, projectionScale } from './tunnel-layout';
 
 const COLORS = ['#ff2e9a', '#ffd23f', '#22e6ff', '#7dff5a'];
 const SPEED = 16;
 const AHEAD = 3.2;
-const GAP = 3.2;
-const RINGS = 30;
+const GAP = 3.4;
+const RINGS = 22;
+const SEG = 5;
+const PTS = 7;
+const rnd = (i: number) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
 export function SoftwareScene() {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const cv = ref.current!;
     const ctx = cv.getContext('2d')!;
-    let w = 0, h = 0, id = 0, dist = 0, sx = 0, last = performance.now();
+    let w = 0, h = 0, id = 0, dist = 0, sa = 0, last = performance.now();
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       w = cv.clientWidth; h = cv.clientHeight;
@@ -21,96 +25,153 @@ export function SoftwareScene() {
     };
     resize();
     window.addEventListener('resize', resize);
-    const laneX = (l: number) => (l - 1.5) * 1.7;
+    const out = [0, 0, 0];
 
     const frame = (now: number) => {
       id = requestAnimationFrame(frame);
       const dt = Math.min((now - last) / 1000, 0.05); last = now;
       const snap = game.getSnapshot();
+      const reduced = snap.reducedEffects;
       const active = snap.phase === 'playing' || snap.phase === 'countdown';
-      const sinceHit = (now - snap.lastHitAt) / 1000;
-      const boost = active ? 1 + Math.min(snap.combo, 60) / 40 : 0.7;
-      const kick = active ? Math.max(0, 1 - sinceHit * 4) * 0.5 : 0;
-      dist += snap.phase === 'paused' ? 0 : SPEED * (boost + kick) * dt;
-      const tx = active && snap.lastLane !== null ? laneX(snap.lastLane) : Math.sin(now / 1250) * 2.2;
-      sx += (tx - sx) * Math.min(1, dt * 12);
-      const camX = sx * 0.35;
-      const f = Math.min(w, h * 1.4) * (0.62 + (active ? Math.max(0, 1 - sinceHit * 5) * 0.04 : 0));
-      const cx = w / 2, cy = h * 0.42, camY = 2.3, camZ = 4.2;
+      const sinceHit = snap.lastHitAt > 0 ? (now - snap.lastHitAt) / 1000 : 99;
+      const fresh = active && !reduced && snap.lastJudge !== 'MISS' ? Math.max(0, 1 - sinceHit * 4) : 0;
+      const combo01 = active ? Math.min(snap.combo, 60) / 60 : 0;
+      const boost = active ? (reduced ? 1 : 1 + Math.min(snap.combo, 60) / 40) : 0.7;
+      dist += snap.phase === 'paused' ? 0 : SPEED * (boost + fresh * 0.5) * dt;
+      const t = game.getTime();
+      let pulse = 0;
+      if (!reduced && snap.phase !== 'paused') {
+        const ph = active ? (((t * snap.track.bpm / 60) % 1) + 1) % 1 : (now / 625) % 1;
+        pulse = Math.pow(1 - ph, 3) * (active ? 1 : 0.5);
+      }
+      const ta = active && snap.lastLane !== null ? laneA(snap.lastLane) : reduced ? 0 : Math.sin(dist * 0.07) * 0.5;
+      sa += (ta - sa) * Math.min(1, dt * 12);
+      const camX = reduced ? 0 : Math.sin(sa) * 0.5;
+      const f = projectionScale(h, CAMERA_FOV + (reduced ? 0 : fresh * 4 + combo01 * 5));
+      const cx = w / 2, cy = h / 2;
+      const pitchCos = Math.cos(-CAMERA_PITCH), pitchSin = Math.sin(-CAMERA_PITCH);
       const P = (x: number, y: number, z: number) => {
-        const d = camZ - z;
-        return d <= 0.2 ? null : [cx + ((x - camX) * f) / d, cy - ((y - camY) * f) / d + h * 0.12, d] as const;
+        const dy = y - camY, dz = camZ - z;
+        const d = dz * pitchCos - dy * pitchSin;
+        if (d <= 0.2) return false;
+        out[0] = cx + ((x - camX) * f) / d; out[1] = cy - ((dy * pitchCos + dz * pitchSin) * f) / d; out[2] = d;
+        return true;
       };
       const fade = (d: number) => Math.max(0, Math.min(1, 1 - (d - 8) / 60));
+      const col = snap.track.color;
 
-      ctx.fillStyle = '#0b0718'; ctx.fillRect(0, 0, w, h);
-      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.5);
-      g.addColorStop(0, snap.track.color + '44'); g.addColorStop(1, 'transparent');
+      ctx.globalAlpha = 1; ctx.fillStyle = '#070514'; ctx.fillRect(0, 0, w, h);
+      // vanishing core
+      const cr = Math.max(w, h) * (0.35 + pulse * 0.03);
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
+      g.addColorStop(0, col + (combo01 > 0.5 ? '66' : '44')); g.addColorStop(1, 'transparent');
       ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
 
-      // rings far to near
+      // rotating segmented hoops far to near
       const off = dist % GAP;
-      ctx.lineWidth = 1.5;
+      ctx.lineCap = 'round';
       for (let i = RINGS - 1; i >= 0; i--) {
-        const z = -i * GAP + off + 2;
-        const a = P(-5.5, 0, z), b = P(5.5, 4.4, z);
-        if (!a || !b) continue;
-        ctx.globalAlpha = fade(a[2]);
-        ctx.strokeStyle = snap.track.color;
-        ctx.strokeRect(a[0], b[1], b[0] - a[0], a[1] - b[1]);
+        const z = -i * GAP + off + 1;
+        const rot = i * 0.45 + (reduced ? 0 : (i % 2 ? 1 : -1) * dist * (0.02 + (i % 3) * 0.012));
+        const rr = R + 0.2 + pulse * 0.05;
+        if (!P(0, 0, z)) continue;
+        const fd = fade(out[2]);
+        ctx.lineWidth = Math.max(1, 0.07 * f / out[2]);
+        for (let k = 0; k < SEG; k++) {
+          ctx.strokeStyle = (i + k) % 3 === 0 ? col : (i + k) % 3 === 1 ? '#ff2e9a' : '#22e6ff';
+          ctx.globalAlpha = Math.min(1, fd * (0.6 + pulse * 0.35 + fresh * 0.2));
+          ctx.beginPath();
+          for (let p = 0; p <= PTS; p++) {
+            const a = rot + (k * Math.PI * 2) / SEG + (p / PTS) * 0.95;
+            if (!P(Math.cos(a) * rr, Math.sin(a) * rr, z)) continue;
+            if (p) ctx.lineTo(out[0], out[1]); else ctx.moveTo(out[0], out[1]);
+          }
+          ctx.stroke();
+        }
+        // circuit ticks
+        ctx.strokeStyle = '#22e6ff'; ctx.globalAlpha = fd * (0.35 + pulse * 0.3); ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let k = 0; k < 16; k++) {
+          const a = rot * 1.5 + (k / 16) * Math.PI * 2, l1 = 0.3 + rnd(k) * 0.6;
+          if (!P(Math.cos(a) * (R - 0.05), Math.sin(a) * (R - 0.05), z)) continue;
+          ctx.moveTo(out[0], out[1]);
+          if (P(Math.cos(a) * (R - l1), Math.sin(a) * (R - l1), z)) ctx.lineTo(out[0], out[1]);
+        }
+        ctx.stroke();
+      }
+      // streaks
+      if (!reduced) {
+        const len = 1.5 + (boost - 0.7) * 4 + fresh * 3;
+        ctx.strokeStyle = '#9fe9ff'; ctx.lineWidth = 1; ctx.globalAlpha = 0.35;
+        ctx.beginPath();
+        for (let i = 0; i < 40; i++) {
+          const a = rnd(i) * Math.PI * 2, r = R * (0.35 + rnd(i + 99) * 0.6);
+          const z = -((rnd(i + 7) * 80 + dist * (0.8 + rnd(i + 3) * 0.6)) % 80) + 2;
+          if (!P(Math.cos(a) * r, Math.sin(a) * r, z)) continue;
+          ctx.moveTo(out[0], out[1]);
+          if (P(Math.cos(a) * r, Math.sin(a) * r, z - len)) ctx.lineTo(out[0], out[1]);
+        }
+        ctx.stroke();
       }
       ctx.globalAlpha = 1;
-      // floor + lanes
+      // lanes (arc strips, near and far edges)
       const zf = -80, zn = 3;
       for (let l = 0; l < 4; l++) {
-        const x = laneX(l), q = [P(x - 0.75, 0, zf), P(x + 0.75, 0, zf), P(x + 0.75, 0, zn), P(x - 0.75, 0, zn)];
-        if (q.some((p) => !p)) continue;
-        const lit = snap.lastLane === l && active ? Math.max(0, 1 - sinceHit * 3.5) : 0;
-        ctx.globalAlpha = 0.1 + lit * 0.25;
-        ctx.fillStyle = COLORS[l];
-        ctx.beginPath(); q.forEach((p, i) => (i ? ctx.lineTo(p![0], p![1]) : ctx.moveTo(p![0], p![1]))); ctx.fill();
-      }
-      ctx.globalAlpha = 0.5; ctx.strokeStyle = '#b9a6ff'; ctx.lineWidth = 1;
-      for (const x of [-3.4, -1.7, 0, 1.7, 3.4]) {
-        const a = P(x, 0, zf), b = P(x, 0, zn);
-        if (a && b) { ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); }
-      }
-      ctx.globalAlpha = 1;
-      // hit pads
-      for (let l = 0; l < 4; l++) {
-        const x = laneX(l), a = P(x - 0.75, 0, 0.45), b = P(x + 0.75, 0, -0.45);
-        if (!a || !b) continue;
-        const lit = snap.lastLane === l && active ? Math.max(0, 1 - sinceHit * 3.5) : 0;
-        ctx.fillStyle = COLORS[l]; ctx.globalAlpha = 0.15 + lit * 0.8;
-        ctx.fillRect(a[0], b[1], b[0] - a[0], a[1] - b[1]);
+        const a = laneA(l), lit = snap.lastLane === l && active && snap.lastJudge !== 'MISS' ? Math.max(0, 1 - sinceHit * 3.5) : 0;
+        const pts: number[] = [];
+        const corners: [number, number][] = [[a + 0.15, zf], [a - 0.15, zf], [a - 0.15, zn], [a + 0.15, zn]];
+        let ok = true;
+        for (const [aa, z] of corners) {
+          if (!P(Math.sin(aa) * R, -Math.cos(aa) * R, z)) { ok = false; break; }
+          pts.push(out[0], out[1]);
+        }
+        if (!ok) continue;
+        ctx.globalAlpha = 0.16 + lit * 0.14 + pulse * 0.05; ctx.fillStyle = COLORS[l];
+        ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); ctx.lineTo(pts[2], pts[3]); ctx.lineTo(pts[4], pts[5]); ctx.lineTo(pts[6], pts[7]); ctx.fill();
+        // hit pad
+        ctx.globalAlpha = 0.15 + lit * 0.8;
+        const q: number[] = [];
+        for (const [aa, z] of [[a + 0.15, 0.45], [a - 0.15, 0.45], [a - 0.15, -0.45], [a + 0.15, -0.45]] as [number, number][]) {
+          if (P(Math.sin(aa) * R, -Math.cos(aa) * R, z)) q.push(out[0], out[1]);
+        }
+        if (q.length === 8) { ctx.beginPath(); ctx.moveTo(q[0], q[1]); ctx.lineTo(q[2], q[3]); ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]); ctx.fill(); }
       }
       ctx.globalAlpha = 1;
-      const l1 = P(-3.5, 0.05, 0), l2 = P(3.5, 0.05, 0);
-      if (l1 && l2) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(l1[0], l1[1]); ctx.lineTo(l2[0], l2[1]); ctx.stroke(); }
-      // notes far to near
+      // hit arc
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath();
+      for (let p = 0; p <= 12; p++) {
+        const aa = -2.02 * STEP + (p / 12) * 4.04 * STEP;
+        if (!P(Math.sin(aa) * R, -Math.cos(aa) * R, 0)) continue;
+        if (p) ctx.lineTo(out[0], out[1]); else ctx.moveTo(out[0], out[1]);
+      }
+      ctx.stroke();
+      // notes, far to near
       if (snap.phase !== 'idle' && snap.phase !== 'results') {
-        const t = game.getTime();
         const vis = game.getNotes().filter((n) => n.status === 'pending' && n.time - t <= AHEAD && n.time - t >= -0.25).sort((a, b) => b.time - a.time);
         for (const n of vis) {
-          const z = -(n.time - t) * SPEED;
-          const a = P(laneX(n.lane) - 0.7, 0.1, z + 0.35), b = P(laneX(n.lane) + 0.7, 0.45, z - 0.35);
-          if (!a || !b) continue;
-          const d = n.time - t;
+          const d = n.time - t, z = -d * SPEED, a = laneA(n.lane);
+          const sn = Math.sin(a), cs = Math.cos(a);
+          // lateral axis (cs, sn), inward axis (-sn, cs)
+          const rr = R - 0.2;
+          const base = [Math.sin(a) * rr, -Math.cos(a) * rr];
+          const c: number[] = [];
+          for (const [lat, inw] of [[-0.55, 0], [0.55, 0], [0.55, 0.3], [-0.55, 0.3]]) {
+            if (P(base[0] + cs * lat - sn * inw, base[1] + sn * lat + cs * inw, z + 0.35)) c.push(out[0], out[1]);
+          }
+          if (c.length < 8) continue;
           ctx.globalAlpha = d > AHEAD - 0.5 ? (AHEAD - d) / 0.5 : 1;
-          ctx.fillStyle = COLORS[n.lane];
-          ctx.shadowColor = COLORS[n.lane]; ctx.shadowBlur = 12;
-          ctx.fillRect(a[0], b[1], b[0] - a[0], Math.max(3, a[1] - b[1]));
+          ctx.fillStyle = COLORS[n.lane]; ctx.shadowColor = COLORS[n.lane]; ctx.shadowBlur = 10;
+          ctx.beginPath(); ctx.moveTo(c[0], c[1]); ctx.lineTo(c[2], c[3]); ctx.lineTo(c[4], c[5]); ctx.lineTo(c[6], c[7]); ctx.closePath(); ctx.fill();
         }
         ctx.shadowBlur = 0; ctx.globalAlpha = 1;
       }
       // ship
-      const sp = P(sx, 0.6, 1.8);
-      if (sp) {
-        const s = f / sp[2];
+      if (P(Math.sin(sa) * (R - 1), -Math.cos(sa) * (R - 1), 1.8)) {
+        const sx = out[0], sy = out[1], s = f / out[2];
         ctx.fillStyle = '#f4ecff';
-        ctx.beginPath(); ctx.moveTo(sp[0], sp[1] - s * 0.5); ctx.lineTo(sp[0] + s * 0.4, sp[1] + s * 0.3); ctx.lineTo(sp[0], sp[1] + s * 0.15); ctx.lineTo(sp[0] - s * 0.4, sp[1] + s * 0.3); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(sx, sy - s * 0.5); ctx.lineTo(sx + s * 0.4, sy + s * 0.3); ctx.lineTo(sx, sy + s * 0.15); ctx.lineTo(sx - s * 0.4, sy + s * 0.3); ctx.closePath(); ctx.fill();
         ctx.fillStyle = 'rgba(255,46,154,.6)';
-        ctx.beginPath(); ctx.moveTo(sp[0] - s * 0.12, sp[1] + s * 0.25); ctx.lineTo(sp[0] + s * 0.12, sp[1] + s * 0.25); ctx.lineTo(sp[0], sp[1] + s * 0.7); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(sx - s * 0.12, sy + s * 0.25); ctx.lineTo(sx + s * 0.12, sy + s * 0.25); ctx.lineTo(sx, sy + s * 0.7); ctx.fill();
       }
     };
     id = requestAnimationFrame(frame);

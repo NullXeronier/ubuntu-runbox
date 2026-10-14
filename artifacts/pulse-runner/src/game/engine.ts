@@ -1,4 +1,5 @@
 import { SynthMusic } from "./audio";
+import { MissionTracker, type MissionProgress } from "./missions";
 
 export type Lane = 0 | 1 | 2 | 3;
 export type Phase = "idle" | "countdown" | "playing" | "paused" | "results";
@@ -42,6 +43,9 @@ export interface GameSnapshot {
   best: number;
   volume: number;
   error: string | null;
+  missions: MissionProgress[];
+  missionError: string | null;
+  reducedEffects: boolean;
 }
 
 export const TRACKS: Track[] = [
@@ -79,20 +83,36 @@ function readBest(track: Track, difficulty: Difficulty): number {
   }
 }
 
-function initialSnapshot(track = TRACKS[0]!, difficulty: Difficulty = "normal", volume = 0.65): GameSnapshot {
+function readReducedEffects(): boolean {
+  try {
+    const stored = localStorage.getItem("pulse-reduced-effects");
+    if (stored === "true" || stored === "false") return stored === "true";
+  } catch {
+    // The mission tracker exposes storage failures without blocking the game.
+  }
+  return typeof window !== "undefined" && typeof window.matchMedia === "function"
+    ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    : false;
+}
+
+function initialSnapshot(track = TRACKS[0]!, difficulty: Difficulty = "normal", volume = 0.65, reducedEffects = readReducedEffects()): GameSnapshot {
   return {
     phase: "idle", track, difficulty, elapsed: 0, duration: track.duration,
     score: 0, combo: 0, maxCombo: 0, hits: 0, perfect: 0, good: 0, misses: 0,
     accuracy: 100, progress: 0, multiplier: 1, lastJudge: null,
     lastJudgeAt: 0, lastLane: null, lastHitAt: 0, best: readBest(track, difficulty),
     volume, error: null,
+    missions: [], missionError: null, reducedEffects,
   };
 }
 
+type GameAudio = Pick<SynthMusic, "prepare" | "start" | "pause" | "resume" | "stop" | "getTime" | "setVolume">;
+
 export class RhythmGame {
-  private audio = new SynthMusic();
-  private snapshot = initialSnapshot();
-  private notes = makeNotes(this.snapshot.track, this.snapshot.difficulty);
+  private audio: GameAudio;
+  private missions: MissionTracker;
+  private snapshot: GameSnapshot;
+  private notes: Note[];
   private listeners = new Set<() => void>();
   private frame: number | null = null;
   private lastPublish = 0;
@@ -101,7 +121,15 @@ export class RhythmGame {
   private operation = 0;
   private lastInput: number[] = [-Infinity, -Infinity, -Infinity, -Infinity];
 
-  constructor() {
+  constructor(options: { audio?: GameAudio; missions?: MissionTracker } = {}) {
+    this.audio = options.audio ?? new SynthMusic();
+    this.missions = options.missions ?? new MissionTracker();
+    this.snapshot = {
+      ...initialSnapshot(),
+      missions: this.missions.getSnapshot(),
+      missionError: this.missions.getError(),
+    };
+    this.notes = makeNotes(this.snapshot.track, this.snapshot.difficulty);
     // Background tabs pause instead of silently dropping the player's combo.
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => {
@@ -124,7 +152,7 @@ export class RhythmGame {
     if (this.snapshot.phase !== "idle" && this.snapshot.phase !== "results") return;
     const track = TRACKS.find((item) => item.id === trackId);
     if (!track || !DIFFICULTIES.includes(difficulty)) return;
-    this.snapshot = initialSnapshot(track, difficulty, this.snapshot.volume);
+    this.resetRun(track, difficulty);
     this.notes = makeNotes(track, difficulty);
     this.publish();
   };
@@ -137,7 +165,7 @@ export class RhythmGame {
       await this.audio.prepare();
       if (operation !== this.operation) return;
       const { track, difficulty, volume } = this.snapshot;
-      this.snapshot = initialSnapshot(track, difficulty, volume);
+      this.resetRun(track, difficulty, volume);
       this.notes = makeNotes(track, difficulty);
       this.missCursor = 0;
       this.lastInput.fill(-Infinity);
@@ -187,7 +215,7 @@ export class RhythmGame {
     this.operation++;
     this.audio.stop();
     this.cancelFrame();
-    this.snapshot = initialSnapshot(this.snapshot.track, this.snapshot.difficulty, this.snapshot.volume);
+    this.resetRun(this.snapshot.track, this.snapshot.difficulty);
     this.notes = makeNotes(this.snapshot.track, this.snapshot.difficulty);
     this.publish();
   };
@@ -237,6 +265,27 @@ export class RhythmGame {
     this.audio.setVolume(volume);
     this.update({ volume });
   };
+
+  setReducedEffects = (reducedEffects: boolean) => {
+    if (typeof reducedEffects !== "boolean") return;
+    let error = this.snapshot.error;
+    try {
+      localStorage.setItem("pulse-reduced-effects", String(reducedEffects));
+      if (error === "Your effects preference could not be saved in this browser.") error = null;
+    } catch {
+      error = "Your effects preference could not be saved in this browser.";
+    }
+    this.update({ reducedEffects, error });
+  };
+
+  private resetRun(track: Track, difficulty: Difficulty, volume = this.snapshot.volume) {
+    this.missions.reset();
+    this.snapshot = {
+      ...initialSnapshot(track, difficulty, volume, this.snapshot.reducedEffects),
+      missions: this.missions.getSnapshot(),
+      missionError: this.missions.getError(),
+    };
+  }
 
   private accuracy(perfect: number, good: number, misses: number) {
     const total = perfect + good + misses;
@@ -300,7 +349,14 @@ export class RhythmGame {
   }
 
   private update(patch: Partial<GameSnapshot>) {
-    this.snapshot = { ...this.snapshot, ...patch };
+    const next = { ...this.snapshot, ...patch };
+    if (patch.score !== undefined || patch.maxCombo !== undefined || patch.perfect !== undefined || patch.phase === "results") {
+      this.missions.advance({
+        maxCombo: next.maxCombo, perfect: next.perfect, score: next.score,
+        finished: next.phase === "results",
+      });
+    }
+    this.snapshot = { ...next, missions: this.missions.getSnapshot(), missionError: this.missions.getError() };
     this.publish();
   }
 

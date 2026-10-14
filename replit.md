@@ -6,6 +6,7 @@ A responsive browser rhythm game: race through a Three.js tunnel, hit four lanes
 
 - `pnpm --filter @workspace/pulse-runner run dev` — managed web workflow (provides PORT and BASE_PATH)
 - `pnpm --filter @workspace/pulse-runner run typecheck` — check the game
+- `pnpm --filter @workspace/scripts exec tsx --test ../artifacts/pulse-runner/src/game/missions.test.ts` — focused mission and game lifecycle checks
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
@@ -32,6 +33,7 @@ A responsive browser rhythm game: race through a Three.js tunnel, hit four lanes
 - `artifacts/pulse-runner/src/components/` — tunnel renderers
 - `artifacts/pulse-runner/src/game/engine.ts` — beatmaps, timing, scoring, game lifecycle
 - `artifacts/pulse-runner/src/game/audio.ts` — original procedural synth soundtrack and audio clock
+- `artifacts/pulse-runner/src/game/missions.ts` — per-run mission progress and persistent completion badges
 - `artifacts/pulse-runner/src/index.css` — visual theme
 
 ## Architecture decisions
@@ -46,10 +48,12 @@ A responsive browser rhythm game: race through a Three.js tunnel, hit four lanes
 - D/F/J/K or Left/Down/Up/Right key timing; touch pads for smaller screens.
 - Perfect/Good/Miss judgments, combo multipliers, accuracy, final grades, and local personal bests.
 - Start/countdown, pause/resume, restart, track selection, volume/mute, and help.
+- Four missions: finish a track, reach a 20-hit combo, land 40 perfect hits, and score 100,000 points. Completed badges persist locally; incomplete objectives reset each run.
 
 ## User preferences
 
 - The user explicitly requested a responsive web tunnel runner music game using Three.js, with keyboard rhythm hits and score-based forward travel.
+- The user wants missions/quests and a more intense circular cyberpunk tunnel theme.
 
 ## Gotchas
 

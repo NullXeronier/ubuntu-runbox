@@ -437,7 +437,7 @@
 html,body,#root{height:100%;overflow:hidden;background:#0b0718;touch-action:manipulation;user-select:none}
 .disp{font-family:'Chakra Petch',sans-serif;font-style:italic;letter-spacing:.02em}
 .mono{font-family:'Space Mono',monospace}
-.panel{background:rgba(14,9,32,.78);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(14px)}
+.panel{background:rgba(9,6,24,.82);border:1px solid rgba(34,230,255,.28);backdrop-filter:blur(14px);clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px)}
 .scan::after{content:'';position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(255,255,255,.025) 0 1px,transparent 1px 3px);mix-blend-mode:overlay}
 @keyframes judge{0%{transform:scale(1.7);opacity:0}15%{opacity:1}100%{transform:scale(1) translateY(-14px);opacity:0}}
 @keyframes cd{0%{transform:scale(2.2);opacity:0}30%{opacity:1}100%{transform:scale(.8);opacity:.2}}
@@ -447,3 +447,14 @@ html,body,#root{height:100%;overflow:hidden;background:#0b0718;touch-action:mani
 .cd-anim{animation:cd .9s ease-out forwards}
 .rise{animation:rise .5s cubic-bezier(.2,.8,.2,1) both}
 .bump{animation:bump .18s ease-out}
+
+@keyframes toast{0%{transform:translateY(-6px);opacity:0}15%{opacity:1;transform:none}100%{opacity:1}}
+.toast-anim{animation:toast .35s ease-out both}
+.reduce-fx *,.reduce-fx *::before,.reduce-fx *::after{animation:none!important;transition-duration:.01ms!important}
+.reduce-fx .btn-lift{transform:none!important}
+@media (prefers-reduced-motion:reduce){.rise,.judge-anim,.cd-anim,.bump{animation:none}}
+@media (max-height:500px){
+  [data-testid="touch-pads"] button{height:44px}
+  [data-testid="text-combo"],[data-testid="text-score"]{font-size:1.75rem;line-height:1.1}
+  [data-testid="text-multiplier"]{font-size:1.1rem}
+}

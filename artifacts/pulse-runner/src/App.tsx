@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Pause, Play, RotateCcw, HelpCircle, Volume2, VolumeX, X, Home } from 'lucide-react';
 import { game, TRACKS, DIFFICULTIES, type Lane } from '@/game/engine';
+import { MissionBoard, MissionError, MissionHud, MissionResults, EffectsToggle } from '@/components/Missions';
 import { Scene, webglAvailable, LANE_COLORS } from '@/components/Scene';
 import { SoftwareScene } from '@/components/SoftwareScene';
 
@@ -42,7 +43,7 @@ function Btn({ children, onClick, tone = 'primary', id, disabled }: { children: 
 function Help({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="panel rise w-full max-w-md p-6" onClick={(e) => e.stopPropagation()} data-testid="modal-help">
+      <div className="panel rise max-h-[90dvh] w-full max-w-md overflow-y-auto p-6" onClick={(e) => e.stopPropagation()} data-testid="modal-help">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="disp text-2xl font-bold">How to run</h2>
           <button data-testid="button-close-help" onClick={onClose} aria-label="Close"><X /></button>
@@ -61,6 +62,8 @@ function Help({ onClose }: { onClose: () => void }) {
           <li>SPACE starts, pauses and resumes. ESC pauses.</li>
           <li>Perfect hits score most. Misses break your combo.</li>
           <li>Long combos raise the multiplier and speed the tunnel.</li>
+          <li>Quests: finish a track, chain 20 hits, land 40 perfects, score 100,000. Progress is per run; earned badges are saved in this browser. Quitting does not finish a run.</li>
+          <li>Reduced effects calms tunnel rotation, camera motion, particles and pulsing. Notes keep their timing.</li>
         </ul>
       </div>
     </div>
@@ -113,6 +116,7 @@ function Hud() {
           </div>
         </div>
         <div className="mt-3 h-1.5 w-full bg-white/10"><div className="h-full" style={{ width: `${s.progress * 100}%`, background: s.track.color }} data-testid="bar-progress" /></div>
+        <MissionHud missions={s.missions} storageError={s.missionError} />
       </div>
       <div className="absolute left-1/2 top-[34%] -translate-x-1/2 text-center">
         {s.phase === 'countdown' && <div key={cd} className="cd-anim disp text-[9rem] font-bold leading-none text-[#ffd23f]" data-testid="text-countdown">{cd}</div>}
@@ -146,7 +150,7 @@ function Menu({ onHelp }: { onHelp: () => void }) {
   const cur = TRACKS.find((t) => t.id === track) ?? TRACKS[0];
   return (
     <div className="absolute inset-0 overflow-y-auto p-4 pt-16">
-      <div className="rise mx-auto my-auto w-full max-w-3xl pb-6">
+      <div className="rise mx-auto my-auto grid w-full max-w-5xl gap-5 pb-6 lg:grid-cols-[1.25fr_1fr]"><div>
         <div className="mono mb-1 text-xs tracking-[.4em] text-[#22e6ff]">RHYTHM RUNNER / 4 LANES</div>
         <h1 className="disp text-6xl font-bold leading-[.9] sm:text-8xl" style={{ textShadow: '4px 4px 0 #ff2e9a' }} data-testid="text-title">PULSE<br />RUNNER</h1>
         <p className="mt-3 max-w-md text-white/75">Fly the tunnel. Hit every beat. The music is the road.</p>
@@ -168,18 +172,22 @@ function Menu({ onHelp }: { onHelp: () => void }) {
           </div>
         </div>
         {s.error && <div className="mt-3 border border-red-400 bg-red-950/70 p-3 text-sm" data-testid="text-error">{s.error}</div>}
+        <MissionError message={s.missionError} />
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <Btn id="button-start" onClick={() => void game.start()}><Play size={20} /> Start run</Btn>
           <Btn id="button-help" tone="ghost" onClick={onHelp}><HelpCircle size={20} /> Help</Btn>
           <span className="mono text-xs text-white/50">or press SPACE</span>
         </div>
+        <div className="mt-4"><EffectsToggle on={s.reducedEffects} /></div>
+      </div>
+      <div className="lg:pt-14"><MissionBoard missions={s.missions} /></div>
       </div>
     </div>
   );
 }
 
 function Overlay({ children }: { children: React.ReactNode }) {
-  return <div className="absolute inset-0 flex items-center justify-center overflow-y-auto bg-[#0b0718]/70 p-4 pb-20">{children}</div>;
+  return <div className="absolute inset-0 flex overflow-y-auto bg-[#070514]/75 p-4 pb-20"><div className="m-auto flex w-full justify-center">{children}</div></div>;
 }
 
 function Stat({ l, v, id }: { l: string; v: string | number; id: string }) {
@@ -209,6 +217,8 @@ function Results() {
           <Stat l="ACCURACY" v={`${s.accuracy.toFixed(1)}%`} id="text-accuracy" />
           <Stat l="BEST" v={s.best.toLocaleString()} id="text-results-best" />
         </div>
+        <MissionResults missions={s.missions} />
+        <MissionError message={s.missionError} />
         {s.error && <div className="mono mt-4 border border-red-400 bg-red-950/70 p-2 text-xs" data-testid="text-game-error">{s.error}</div>}
         <div className="mt-4 flex flex-wrap gap-3">
           <Btn id="button-retry" onClick={() => void game.restart()}><RotateCcw size={18} /> Retry</Btn>
@@ -226,6 +236,8 @@ function Paused() {
       <div className="panel rise p-6 text-center" data-testid="panel-paused">
         <h2 className="disp mb-4 text-5xl font-bold">PAUSED</h2>
         {s.error && <div className="mono mb-4 border border-red-400 bg-red-950/70 p-2 text-xs" data-testid="text-game-error">{s.error}</div>}
+        <MissionError message={s.missionError} />
+        <div className="mb-4 flex justify-center"><EffectsToggle on={s.reducedEffects} /></div>
         <div className="flex flex-wrap justify-center gap-3">
           <Btn id="button-resume" onClick={() => void game.resume()}><Play size={18} /> Resume</Btn>
           <Btn id="button-restart" tone="ghost" onClick={() => void game.restart()}><RotateCcw size={18} /> Restart</Btn>
@@ -261,7 +273,7 @@ function App() {
     const down = (e: KeyboardEvent) => {
       if (e.repeat) return;
       const t = e.target as HTMLElement;
-      if (t && t.tagName === 'INPUT' && e.code === 'Space') return;
+      if (t && (t.tagName === 'INPUT' || t.closest?.('[data-hotkey-skip]')) && e.code === 'Space') return;
       if (helpRef.current) {
         if (e.code === 'Escape') setHelp(false);
         return;
@@ -286,7 +298,7 @@ function App() {
   }, []);
 
   return (
-    <div className="scan relative h-[100dvh] w-full overflow-hidden bg-[#0b0718] text-white">
+    <div className={`scan relative h-[100dvh] w-full overflow-hidden bg-[#070514] text-white${s.reducedEffects ? ' reduce-fx' : ''}`}>
       {gl ? (
         <div className="absolute inset-0"><Scene /></div>
       ) : (
