@@ -1,5 +1,5 @@
 import { test, expect, pressButton, checkRenderer, openClockedGame, assertTrustedLaneInput, injectStorageFault, attachStorageEvidence } from './fixtures';
-import { RunDriver } from './driver';
+import { RunDriver, notes } from './driver';
 
 test('native-clock renderer/audio startup and visible countdown reach gameplay', async ({ page }, info) => {
   await page.goto('./');
@@ -182,6 +182,154 @@ const missionIds = ['first-run', 'combo-20', 'perfect-40', 'score-100k'] as cons
 const unreadableQuests = "Saved mission badges could not be read. This session's missions still work; earn a new badge to save again.";
 const sessionOnlyQuests = 'Mission badges cannot be saved in this browser. Progress will remain available for this session.';
 const effectsSaveFailure = 'Your effects preference could not be saved in this browser.';
+const timingKey = 'pulse-timing-offset-ms';
+const timingReadFailure = 'Your timing preference could not be read. Using 0 ms; changes may only last until you leave this page.';
+const timingInvalid = 'Your saved timing offset was invalid. Using 0 ms; adjust or reset it to save a new preference.';
+const timingSaveFailure = 'Your timing offset is active for this page, but could not be saved in this browser. It may be lost on reload.';
+
+for (const scenario of [
+  { name: 'denied reads', reads: true, writes: false, raw: '65', initial: 0, warning: timingReadFailure },
+  { name: 'denied reads and writes', reads: true, writes: true, raw: '65', initial: 0, warning: timingReadFailure },
+  { name: 'denied writes with no saved offset', reads: false, writes: true, raw: undefined, initial: 0, warning: null },
+  { name: 'denied writes with a saved offset', reads: false, writes: true, raw: '-40', initial: -40, warning: null },
+  { name: 'malformed timing JSON', reads: false, writes: false, raw: '{', initial: 0, warning: timingReadFailure },
+  { name: 'out-of-range saved timing', reads: false, writes: false, raw: '301', initial: 0, warning: timingInvalid },
+  { name: 'wrong-type saved timing', reads: false, writes: false, raw: '"120"', initial: 0, warning: timingInvalid },
+]) {
+  test(`calibration storage faults: ${scenario.name} preserves honest status, reset, input and independent saves`, async ({ page }, info) => {
+    await injectStorageFault(page, {
+      denyReads: scenario.reads ? [timingKey] : undefined,
+      denyWrites: scenario.writes ? [timingKey] : undefined,
+      timingData: scenario.raw,
+    });
+    await openClockedGame(page, info);
+    const format = (offset: number) => `${offset > 0 ? '+' : ''}${offset} ms`;
+    const menuWarning = page.getByTestId('text-timing-error');
+    await expect(page.getByTestId('text-timing-summary')).toHaveText(format(scenario.initial));
+    if (scenario.warning) {
+      await expect(menuWarning).toBeVisible();
+      await expect(menuWarning).toHaveText(scenario.warning);
+    } else await expect(menuWarning).toHaveCount(0);
+    expect(await page.evaluate((key) => window.__pulseStorageProbe.readStored(key), timingKey)).toBe(scenario.raw ?? null);
+
+    // Earn and save a real badge before touching calibration, never seed one.
+    await pressButton(page, info, 'button-difficulty-easy');
+    const first = await RunDriver.start(page, info);
+    await first.songTime(notes[0]!.time + scenario.initial / 1000);
+    await first.input(notes[0]!.lane);
+    await expect(page.getByTestId('text-judge')).toHaveText('PERFECT');
+    await first.finish();
+    await expect(page.getByTestId('badge-new-first-run')).toHaveText('NEWLY EARNED');
+    await pressButton(page, info, 'button-menu');
+    await pressButton(page, info, 'switch-reduced-effects');
+    await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'true');
+    const independentSaves = await page.evaluate(() => ({
+      quests: window.__pulseStorageProbe.readStored('pulse-missions'),
+      effects: window.__pulseStorageProbe.readStored('pulse-reduced-effects'),
+    }));
+    expect(JSON.parse(independentSaves.quests!)).toEqual({ version: 1, completed: ['first-run'] });
+    expect(independentSaves.effects).not.toBeNull();
+
+    await pressButton(page, info, 'button-calibration');
+    const dialog = page.getByTestId('modal-calibration');
+    const warning = dialog.getByTestId('text-timing-error');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId('text-timing-offset')).toHaveText(format(scenario.initial));
+    if (scenario.warning) {
+      await expect(warning).toBeVisible();
+      await expect(warning).toHaveText(scenario.warning);
+      await expect(dialog.getByTestId('text-timing-state')).toHaveText('Applied now, but NOT saved in this browser.');
+    } else await expect(warning).toHaveCount(0);
+
+    // Use trusted native slider keys, not programmatic value assignment.
+    // Home selects -300; eight PageUp steps of 60 ms select +180.
+    const setOffset = async () => {
+      const slider = dialog.getByTestId('input-timing-offset');
+      await slider.focus();
+      await page.keyboard.press('Home');
+      for (let step = 0; step < 8; step++) await page.keyboard.press('PageUp');
+      await expect(dialog.getByTestId('text-timing-offset')).toHaveText('+180 ms');
+      await expect(slider).toHaveAttribute('aria-valuetext', '+180 ms');
+    };
+    const assertSave = async (offset: number) => {
+      await expect(dialog.getByTestId('text-timing-state')).toHaveText(scenario.writes
+        ? 'Applied now, but NOT saved in this browser.' : 'Applied now and saved.');
+      if (scenario.writes) {
+        await expect(warning).toBeVisible();
+        await expect(warning).toHaveText(timingSaveFailure);
+      } else await expect(warning).toHaveCount(0);
+      expect(await page.evaluate((key) => window.__pulseStorageProbe.readStored(key), timingKey))
+        .toBe(scenario.writes ? scenario.raw ?? null : String(offset));
+    };
+    await setOffset();
+    await assertSave(180);
+    await pressButton(page, info, 'button-offset-reset');
+    await expect(dialog.getByTestId('text-timing-offset')).toHaveText('0 ms');
+    await expect(dialog.getByTestId('input-timing-offset')).toHaveValue('0');
+    await assertSave(0);
+    // Leave a nonzero value active so reload cannot accidentally pass on reset.
+    await setOffset();
+    await assertSave(180);
+    await info.attach('calibration-storage-status', { body: await page.screenshot(), contentType: 'image/png' });
+    await pressButton(page, info, 'button-calibration-done');
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByTestId('text-timing-summary')).toHaveText('+180 ms');
+    if (scenario.writes) {
+      await expect(menuWarning).toBeVisible();
+      await expect(menuWarning).toHaveText(timingSaveFailure);
+    } else await expect(menuWarning).toHaveCount(0);
+    await pressButton(page, info, 'button-calibration');
+    await expect(dialog.getByTestId('text-timing-offset')).toHaveText('+180 ms');
+    await assertSave(180);
+    await pressButton(page, info, 'button-close-calibration');
+    await page.clock.runFor(32); // allow focus restoration before starting
+    await expect(dialog).toHaveCount(0);
+
+    // At +180 ms this would miss at the default offset: prove the engine uses
+    // the page-only preference, not just a changed label. No direct game calls.
+    const run = await RunDriver.start(page, info);
+    await page.evaluate(() => { window.__pulseProbe.inputs.length = 0; });
+    await run.songTime(notes[0]!.time + 0.180);
+    await run.input(notes[0]!.lane);
+    await expect(page.getByTestId('text-judge')).toHaveText('PERFECT');
+    await expect(page.getByTestId('text-score')).toHaveText('1,000');
+    await expect(page.getByTestId('text-combo')).toHaveText('1');
+    await assertTrustedLaneInput(page, info);
+    await pressButton(page, info, 'button-pause');
+    await pressButton(page, info, 'button-quit');
+    await expect(page.getByTestId('text-mission-error')).toHaveCount(0);
+    await expect(page.getByTestId('text-error')).toHaveCount(0);
+    const attempts = await page.evaluate(() => window.__pulseStorageProbe.attempts);
+    expect(attempts).toContainEqual({ operation: 'get', key: timingKey, denied: scenario.reads });
+    expect(attempts.filter((a) => a.operation === 'set' && a.key === timingKey)).toEqual(
+      // Nine native slider changes per adjustment, plus the reset.
+      Array.from({ length: 19 }, () => ({ operation: 'set', key: timingKey, denied: scenario.writes })),
+    );
+    await attachStorageEvidence(page, info, 'calibration-before-reload');
+    await page.reload();
+    const reloadedOffset = scenario.reads ? 0 : scenario.writes ? scenario.initial : 180;
+    await expect(page.getByTestId('text-timing-summary')).toHaveText(format(reloadedOffset));
+    if (scenario.reads) {
+      await expect(menuWarning).toBeVisible();
+      await expect(menuWarning).toHaveText(timingReadFailure);
+    } else await expect(menuWarning).toHaveCount(0);
+    await expect(page.getByTestId('badge-complete-first-run')).toHaveText('DONE');
+    await expect(page.getByTestId('text-missions-count')).toHaveText('1 / 4 COMPLETE');
+    await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'true');
+    expect(await page.evaluate(() => ({
+      quests: window.__pulseStorageProbe.readStored('pulse-missions'),
+      effects: window.__pulseStorageProbe.readStored('pulse-reduced-effects'),
+    }))).toEqual(independentSaves);
+    await expect(page.getByTestId('text-mission-error')).toHaveCount(0);
+    await expect(page.getByTestId('text-error')).toHaveCount(0);
+    await checkRenderer(page, info, 'calibration-storage-reload', true);
+    await pressButton(page, info, 'button-calibration');
+    await expect(dialog.getByTestId('text-timing-offset')).toHaveText(format(reloadedOffset));
+    await expect(dialog.getByTestId('text-timing-state')).toHaveText(scenario.reads
+      ? 'Applied now, but NOT saved in this browser.' : 'Applied now and saved.');
+    await attachStorageEvidence(page, info, 'calibration-after-reload');
+  });
+}
 
 for (const mode of ['access denied', 'reads and writes denied', 'writes denied'] as const) {
   test(`storage faults: ${mode} keeps gameplay and badges session-only without claiming persistence`, async ({ page }, info) => {

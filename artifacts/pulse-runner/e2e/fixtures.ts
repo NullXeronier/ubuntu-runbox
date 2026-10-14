@@ -18,6 +18,7 @@ type StorageFault = {
   denyReads?: 'all' | string[];
   denyWrites?: 'all' | string[];
   questData?: string;
+  timingData?: string;
 };
 
 declare global {
@@ -51,6 +52,9 @@ export async function injectStorageFault(page: Page, fault: StorageFault) {
     // Never overwrite repaired data on reload, or seed a completed badge.
     if (options.questData !== undefined && nativeGet.call(storage, 'pulse-missions') === null) {
       nativeSet.call(storage, 'pulse-missions', options.questData);
+    }
+    if (options.timingData !== undefined && nativeGet.call(storage, 'pulse-timing-offset-ms') === null) {
+      nativeSet.call(storage, 'pulse-timing-offset-ms', options.timingData);
     }
     if (options.accessDenied) {
       Object.defineProperty(window, 'localStorage', {
@@ -86,6 +90,7 @@ export async function attachStorageEvidence(page: Page, info: TestInfo, label: s
     attempts: window.__pulseStorageProbe.attempts,
     quests: window.__pulseStorageProbe.readStored('pulse-missions'),
     effects: window.__pulseStorageProbe.readStored('pulse-reduced-effects'),
+    timing: window.__pulseStorageProbe.readStored('pulse-timing-offset-ms'),
   }));
   await info.attach(`storage-${label}`, { body: JSON.stringify(evidence, null, 2), contentType: 'application/json' });
 }

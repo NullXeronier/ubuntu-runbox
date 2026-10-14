@@ -38,7 +38,7 @@ executable override takes precedence everywhere.
 | mobile-webgl2 | 375 × 812 | Trusted touchscreen taps on pads | Actual Three.js WebGL2 |
 | mobile-canvas2d | 375 × 812 | Trusted touchscreen taps on pads | Canvas2D compatibility |
 
-All ten journeys run in every project (40 test cases). Nothing is skipped
+All seventeen journeys run in every project (68 test cases). Nothing is skipped
 when WebGL fails. WebGL projects enable Chromium ANGLE/SwiftShader: this is
 software-backed **real WebGL2**, including Three.js startup, GLSL compilation,
 and draw calls, not a CPU projection check. It does not certify physical GPU
@@ -87,6 +87,16 @@ attached to the report; console/uncaught errors fail a test.
    freezes score/combo and resume accepts the next trusted note. Quest saves
    continue to work. Reload restores the OS effects default, not the failed
    preference, while retaining the independently saved quest badge.
+8. **Calibration storage failures (seven journeys):** deny timing reads,
+   deny reads and writes, or deny writes with absent/existing saved offsets.
+   Also load malformed JSON, an out-of-range number, and a wrong-type value.
+   Check menu/dialog warnings, applied-versus-saved status, manual adjustment,
+   reset, and reopening. Trusted lane input at +180 ms must score PERFECT
+   after closing the dialog. Reload returns to 0 ms for denied reads or an
+   absent save, the prior offset for a rejected overwrite, or the repaired
+   saved value when writes succeed. Independently earned/saved quests and an
+   effects preference must remain unchanged. These are storage/UI checks,
+   not measurements of physical headphone latency or device-profile switching.
 
 The deterministic journeys use Playwright's virtual clock and make the
 `AudioContext.currentTime` getter follow its virtual `performance.now`.
