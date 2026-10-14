@@ -1,1 +1,2 @@
 - [Tunnel rendering verification](tunnel-rendering.md) — the capture browser can lack WebGL2; preserve the primary Three.js renderer and keep the compatibility path playable.
+- [Preview discovery dependencies](preview-discovery.md) — prefer native file discovery for the fixed preview scan; do not reintroduce an unpatched glob-parser dependency.
