@@ -3,6 +3,22 @@
 
 ## Cross-engine extension: implemented, execution blocked on this host
 
+
+### Linux runner follow-up
+
+A dedicated Ubuntu 24.04 workflow and Linux runner script are now prepared.
+They use version-matched browser downloads, Xvfb/Mesa, a private native
+PulseAudio null sink, and an explicit 48-case evidence gate. The workflow
+retains reports and runtime logs on failure. The evidence gate has isolated
+unit tests for complete reports, omissions, skipped/failed cases, missing
+attachments, retries and global failures.
+
+**The Linux workflow has not been executed yet.** No GitHub repository/runner
+connection is currently authorized in this workspace. Connecting the intended
+repository and dispatching the workflow is still required before any
+Firefox/WebKit pass can be claimed. The files are runner configuration, not
+new passing browser evidence.
+
 The default configuration now invokes the same four journeys in 12 projects
 (48 cases): Chromium, Firefox and WebKit, each with keyboard/375px trusted-touch
 input and explicit native-WebGL2/forced-Canvas2D coverage. The original Chromium

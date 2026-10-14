@@ -1,5 +1,43 @@
 # Playable Pulse Runner regression tests
 
+
+## Dedicated Linux release runner
+
+`.github/workflows/pulse-runner-browsers.yml` provides an Ubuntu 24.04 GitHub
+Actions job on relevant pushes/PRs and manual dispatch. It installs the locked
+dependencies and version-matched browsers with their OS libraries, checks types
+and units, and runs `bash scripts/run-pulse-browser-matrix-linux.sh`.
+
+The script uses a private native PulseAudio server with a null output sink and
+headed browsers under Xvfb/Mesa llvmpipe. This enables native audio-clock and
+software-backed real WebGL checks without speakers or a physical GPU. It does
+not fake Web Audio, clocks, game state, shaders or draw calls. The audio server
+and temporary socket are cleaned up on exit; the runner does not alter a
+personal desktop's default audio server.
+
+The release script accepts no test filters or unsupported-capability skips.
+It uses bundled Chromium as well as bundled Firefox/WebKit, starts the game
+from the checkout, and rejects partial reports, retries, skipped cases or
+missing native-audio/renderer/trusted-input evidence. All 48 cases must pass.
+Any missing Mesa/WebGL/native-audio capability is still a hard failure.
+
+On a dedicated Ubuntu 24.04 host, install Node 24 and pnpm 10.26.1, then:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox webkit
+sudo apt-get update
+sudo apt-get install -y xvfb xauth mesa-utils libgl1-mesa-dri libegl-mesa0 pulseaudio pulseaudio-utils
+bash scripts/run-pulse-browser-matrix-linux.sh
+```
+
+GitHub retains the full Playwright report and the Linux runtime/audio/graphics
+logs for 14 days, including on failure. Runtime logs are under
+`generated-artifacts/pulse-runner-linux/`; browser evidence remains under
+`generated-artifacts/pulse-runner/`. Adding a workflow is not execution evidence:
+the repository must be connected and the actual runner result inspected before
+claiming Firefox/WebKit verification.
+
 ## Personal-best browser support
 
 Personal-best writes require the native Web Locks API in a secure context

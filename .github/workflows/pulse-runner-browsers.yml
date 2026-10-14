@@ -1,0 +1,77 @@
+name: Pulse Runner browser matrix
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - artifacts/pulse-runner/**
+      - scripts/run-pulse-browser-matrix-linux.sh
+      - scripts/assert-pulse-browser-matrix*.mjs
+      - .github/workflows/pulse-runner-browsers.yml
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - package.json
+      - .npmrc
+      - tsconfig.base.json
+  push:
+    paths:
+      - artifacts/pulse-runner/**
+      - scripts/run-pulse-browser-matrix-linux.sh
+      - scripts/assert-pulse-browser-matrix*.mjs
+      - .github/workflows/pulse-runner-browsers.yml
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - package.json
+      - .npmrc
+      - tsconfig.base.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pulse-browser-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browsers:
+    name: Chromium, Firefox and WebKit / Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install version-matched browsers and Linux runtime
+        run: |
+          pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox webkit
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth mesa-utils libgl1-mesa-dri libegl-mesa0 pulseaudio pulseaudio-utils
+      - name: Check game and browser harness
+        run: |
+          pnpm --filter @workspace/pulse-runner run typecheck
+          pnpm --filter @workspace/pulse-runner run test:e2e:types
+          pnpm --filter @workspace/pulse-runner run test:unit
+          node --test scripts/assert-pulse-browser-matrix.test.mjs
+      - name: Run all 48 browser cases with native audio clocks and explicit renderers
+        run: bash scripts/run-pulse-browser-matrix-linux.sh
+      - name: Retain browser evidence even when setup or assertions fail
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-runner-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            generated-artifacts/pulse-runner/
+            generated-artifacts/pulse-runner-linux/
+          if-no-files-found: warn
+          retention-days: 14
