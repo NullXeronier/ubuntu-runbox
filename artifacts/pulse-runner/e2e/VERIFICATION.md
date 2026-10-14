@@ -12,11 +12,12 @@ unit tests for complete reports, omissions, skipped/failed cases, missing
 attachments, retries and global failures.
 
 **The Linux workflow has not been executed yet.** The user connected GitHub
-and supplied a repository, now configured as `origin`. The connection reports
-healthy authorization with repository/workflow scopes, but the actual
-authenticated `git ls-remote --symref origin HEAD` request is rejected with
+and supplied a repository, now configured as `origin`. After a connection retry,
+`git ls-remote` succeeded and returned no refs (an empty repository). However,
+pushing `HEAD:refs/heads/ci/pulse-browser-matrix` was rejected with
 `Invalid username or token`; the GitHub CLI also reports no authentication.
-Retrying after confirming the connection binding did not resolve access.
+Read access therefore does not establish usable write authentication, despite
+the connection reporting healthy authorization with repository/workflow scopes.
 No test branch was pushed, workflow dispatched, default branch changed, or
 deployment performed. Repository authentication must work before dispatch and
 before any Firefox/WebKit pass can be claimed. These files are runner
