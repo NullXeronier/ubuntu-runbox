@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { bestKey, loadBest, persistBest } from "./best";
+import { bestKey, loadBest, persistBest, readLegacyBest } from "./best";
 
 const originals = new Map(["indexedDB", "navigator", "localStorage"].map((name) =>
   [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
@@ -79,6 +79,27 @@ test("a denied legacy read never overwrites either stored best", async () => {
   assert.equal(values.get(key), "5000");
   deniedReads = false;
   assert.equal(await loadBest(key), 5000);
+});
+
+test("malformed legacy scores preserve both records rather than becoming zero", async () => {
+  await persistBest(key, 5000);
+  for (const damaged of ["unrecognized", "", "  ", "-1", "NaN", "Infinity"]) {
+    values.set(key, damaged);
+    assert.equal(readLegacyBest(key), 0);
+    await assert.rejects(loadBest(key), /Unreadable legacy personal best/);
+    await assert.rejects(persistBest(key, 6000), /Unreadable legacy personal best/);
+    assert.equal(values.get(key), damaged);
+    staleReads = true; // Read only the authoritative record, without its mirror.
+    assert.equal(await loadBest(key), 5000);
+    staleReads = false;
+  }
+});
+
+test("missing and zero legacy scores remain valid", async () => {
+  assert.equal(await loadBest(key), 0);
+  values.set(key, "0");
+  assert.equal(await loadBest(key), 0);
+  assert.equal(await persistBest(key, 1000), 1000);
 });
 
 test("a denied mirror write aborts the authoritative write", async () => {

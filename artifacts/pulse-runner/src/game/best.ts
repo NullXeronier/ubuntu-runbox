@@ -9,8 +9,13 @@ export const bestKey = (trackId: string, difficulty: string) =>
 
 export function readLegacyBest(key: string, requireReadable = false): number {
   try {
-    const score = Number(localStorage.getItem(key));
-    return Number.isFinite(score) && score > 0 ? score : 0;
+    const value = localStorage.getItem(key);
+    if (value === null) return 0;
+    const score = Number(value);
+    if (value.trim() === "" || !Number.isFinite(score) || score < 0) {
+      throw new Error("Unreadable legacy personal best");
+    }
+    return score;
   } catch (error) {
     if (requireReadable) throw error;
     return 0;

@@ -119,6 +119,60 @@ test('personal best: a malformed authoritative record stays intact without leaki
   await reader.close();
 });
 
+test('personal best: a malformed legacy record preserves the valid authoritative best and usable results', async ({ page, context }, info) => {
+  const reader = await openStoragePage(context);
+  const canonical = 5000;
+  const damaged = 'unrecognized';
+  // Seed existing records only once; do not replace native IndexedDB, Web Locks,
+  // or storage methods, and never reseed on reload.
+  await databaseBest(reader, key, canonical);
+  await reader.evaluate(({ key, damaged }) => localStorage.setItem(key, damaged), { key, damaged });
+  const records = async () => {
+    // Reload a storage-only document so localStorage's per-tab cache cannot
+    // conceal an unsafe mirror write. The database read uses a new transaction.
+    await reader.reload();
+    return {
+      canonical: await databaseBest(reader, key),
+      legacy: await reader.evaluate((key) => localStorage.getItem(key), key),
+    };
+  };
+  const unchanged = { canonical, legacy: damaged };
+  expect(await records()).toEqual(unchanged);
+
+  const readWarning = 'Your saved personal best could not be read. Existing scores have not been changed.';
+  await openClockedGame(page, info);
+  await pressButton(page, info, 'button-difficulty-easy');
+  await expect(page.getByTestId('text-error')).toHaveText(readWarning);
+  await expect(page.getByTestId('text-missions-count')).toHaveText('0 / 4 COMPLETE');
+  expect(await records()).toEqual(unchanged);
+
+  const run = await RunDriver.start(page, info);
+  // Exceed the valid authoritative best: an unsafe save must not look harmless
+  // just because taking the maximum would leave the old number unchanged.
+  for (let index = 0; index < 6; index++) await run.hit(index);
+  await expect(page.getByTestId('text-score')).toHaveText('6,000');
+  await assertTrustedLaneInput(page, info);
+  await run.finish();
+  await expect(page.getByTestId('text-final-score')).toHaveText('6,000');
+  await expect(page.getByTestId('text-results-best')).toHaveText('6,000');
+  await expect(page.getByTestId('badge-new-first-run')).toHaveText('NEWLY EARNED');
+  await expect(page.getByTestId('text-game-error')).toHaveText(
+    'Your score is shown below, but this browser could not save your personal best.');
+  expect(await records()).toEqual(unchanged);
+  await checkRenderer(page, info, 'malformed-legacy-results', true);
+
+  await pressButton(page, info, 'button-menu');
+  await expect(page.getByTestId('text-error')).toHaveText(readWarning);
+  await expect(page.getByTestId('badge-complete-first-run')).toHaveText('DONE');
+  await page.reload();
+  await pressButton(page, info, 'button-difficulty-easy');
+  await expect(page.getByTestId('text-error')).toHaveText(readWarning);
+  await expect(page.getByTestId('badge-complete-first-run')).toHaveText('DONE');
+  expect(await records()).toEqual(unchanged);
+  await checkRenderer(page, info, 'malformed-legacy-reload', true);
+  await reader.close();
+});
+
 for (const fault of ['unavailable', 'open denied', 'write denied'] as const) {
   test(`personal best: IndexedDB ${fault} preserves existing scores and shows a save warning`, async ({ page, context }, info) => {
     const reader = await openStoragePage(context);
