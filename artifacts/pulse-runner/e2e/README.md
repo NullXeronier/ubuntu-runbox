@@ -100,55 +100,6 @@ finished runs have queued saves, tests both score orderings with storage events
 suppressed, and checks the final persisted maximum after both writers drain.
 It also covers missing/rejected locks and denied reads without losing results.
 
-Run from the workspace root:
-
-```sh
-pnpm install --frozen-lockfile
-pnpm --filter @workspace/pulse-runner exec playwright install chromium firefox webkit
-pnpm --filter @workspace/pulse-runner run test:unit
-pnpm --filter @workspace/pulse-runner run test:e2e:types
-pnpm --filter @workspace/pulse-runner run test:e2e
-```
-
-The browser command reuses the managed game workflow on port 25983, or starts
-the same dev command if it is not running. On CI it starts its own server and
-fails if that port is occupied. No API, database, accounts, or saved player data
-are needed. Each test gets a fresh browser context and empty localStorage.
-
-To target an already running app instead, set `PULSE_E2E_BASE_URL` to its full
-URL **with a trailing slash**, including any artifact base path. For example,
-`PULSE_E2E_BASE_URL="https://<development-domain>/"`. The tests use relative
-navigation and will not start a replacement server in this mode. If Chromium
-is supplied by the environment, `PULSE_E2E_CHROMIUM` can name its executable.
-On supported Linux CI hosts, install Playwright's documented OS libraries for
-all three engines as well as downloading their version-matched browsers:
-
-```sh
-pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox webkit
-CI=1 pnpm --filter @workspace/pulse-runner run test:e2e
-```
-
-The lockfile currently resolves Playwright 1.64.0: its bundled engines are
-Chromium 156.0.8078.4, Firefox 157.0 (revision 1555), and WebKit 27.2 (revision
-2370; OS-specific revisions can differ). Browser-version attachments record
-what actually ran, including any system Chromium override. Do not reuse an
-older Nix Playwright bundle with the newer driver: browser protocols differ.
-WebKit is Safari's engine, **not** branded Safari or a real iPhone.
-
-On Replit/NixOS the config automatically uses the `chromium` installed by this
-project's Nix packages, with its runtime-library wrapper. A downloaded Linux
-Playwright binary alone can fail to find `libglib-2.0.so.0` on NixOS. Outside
-Replit the default remains Playwright's version-matched Chromium; the explicit
-executable override takes precedence everywhere. This Chromium exception must
-not leak into Firefox/WebKit launch options. Firefox and WebKit use the
-version-matched bundled executables, not ordinary system Firefox/Safari.
-
-Downloading these bundles does not install their runtime libraries on NixOS.
-If Firefox/WebKit cannot launch or create a page, the result is a browser setup
-failure, not an application regression, and not passing coverage. Run the same
-matrix on a supported host with its dependencies; never substitute an older
-incompatible browser or remove a failing project from the release command.
-
 ## Required matrix
 
 | Project | Viewport | Lane input | Required renderer |
@@ -166,7 +117,11 @@ Firefox's mobile rows use a narrow viewport and native trusted touch;
 `isMobile` is intentionally off because Playwright Firefox does not implement
 mobile layout emulation. These rows do not certify Android Firefox or hardware.
 
-All four journeys run in every project (32 test cases). Nothing is silently
+The four core journeys tagged `@cross-engine` run in every project (32 cases)
+in the dedicated Linux workflow. The unfiltered `test:e2e` command also retains
+all storage, personal-best and concurrent-tab tests added separately; a passing
+core matrix does not certify those additional cases.
+Nothing is silently
 skipped or downgraded when WebGL fails. Chromium WebGL projects enable
 ANGLE/SwiftShader: this is
 software-backed **real WebGL2**, including Three.js startup, GLSL compilation,

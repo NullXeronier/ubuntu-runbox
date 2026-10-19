@@ -77,7 +77,7 @@ xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX +render -noreset" \
   bash -c '
     set -euo pipefail
     glxinfo -B > "$PULSE_LINUX_EVIDENCE_DIR/graphics.txt"
-    pnpm --filter @workspace/pulse-runner run test:e2e
+    pnpm --filter @workspace/pulse-runner run test:e2e --grep @cross-engine
   ' 2>&1 | tee "$output/matrix.log"
 
 # Do not accept a green command that silently omitted or skipped a project.
