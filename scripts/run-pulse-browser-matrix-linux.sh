@@ -15,7 +15,7 @@ for command in pnpm node xvfb-run glxinfo pulseaudio pactl; do
   fi
 done
 if [[ $# -ne 0 ]]; then
-  echo "The release runner accepts no filters: all 72 Chromium/Firefox core and personal-best cases must execute." >&2
+  echo "The release runner accepts no filters: all 112 Chromium/Firefox core, personal-best and quest storage cases must execute." >&2
   exit 1
 fi
 
@@ -80,7 +80,7 @@ xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX +render -noreset" \
   bash -c '
     set -euo pipefail
     glxinfo -B > "$PULSE_LINUX_EVIDENCE_DIR/graphics.txt"
-    pnpm --filter @workspace/pulse-runner run test:e2e --grep "@cross-engine|@best-persistence"
+    pnpm --filter @workspace/pulse-runner run test:e2e --grep "@cross-engine|@best-persistence|@quest-storage"
   ' 2>&1 | tee "$output/matrix.log"
 
 # Do not accept a green command that silently omitted or skipped a project.

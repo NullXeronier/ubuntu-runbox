@@ -11,12 +11,49 @@ const browserErrors = (errors) => ({
   body: Buffer.from(JSON.stringify(errors)).toString('base64'),
 });
 
+const jsonAttachment = (name, data) => ({
+  name, contentType: 'application/json', body: Buffer.from(JSON.stringify(data)).toString('base64'),
+});
+
+function questAttachment(name, quest, engine, device, renderer) {
+  const contextPolicy = renderer === 'canvas2d' ? 'injected-context-denial' : 'native';
+  if (name === 'environment-capabilities') return jsonAttachment(name, {
+    engine: engine ? 'firefox' : 'chromium', platform: 'linux', browserVersion: '157.0',
+    contextPolicy, audio: { state: 'running', trustedGesture: true, start: 0, end: 0.1 },
+  });
+  if (name.startsWith('renderer-')) return jsonAttachment(name, {
+    contextPolicy, canvases: [{
+      kind: renderer === 'canvas2d' ? '2d' : 'webgl2', softwareCanvas: renderer === 'canvas2d',
+      draws: 10, width: 375, height: 812, version: 'WebGL 2.0', lost: false, error: 0,
+    }],
+  });
+  if (name === 'trusted-lane-input') return jsonAttachment(name, {
+    expected: device === 'mobile' ? 'touch' : 'keyboard',
+    events: [{ trusted: true, type: device === 'mobile' ? 'touch' : 'keyboard',
+      code: device === 'mobile' ? 'pad-lane-0' : 'KeyD' }],
+  });
+  const attempts = quest.mode === 'access denied'
+    ? [{ operation: 'access', key: null, denied: true }]
+    : [{ operation: 'get', key: 'pulse-missions', denied: quest.mode === 'reads and writes denied' }];
+  if (name === 'storage-failed-quest-saves' && quest.mode !== 'access denied') {
+    attempts.push({ operation: 'set', key: 'pulse-missions', denied: true });
+  }
+  if (name === 'storage-repaired-quests') {
+    attempts.push({ operation: 'set', key: 'pulse-missions', denied: false });
+  }
+  return jsonAttachment(name, {
+    quests: name.startsWith('storage-repaired-quests') ? '{"version":1,"completed":["first-run"]}'
+      : quest.raw ?? '{ "version": 1, "completed": [] }',
+    attempts, effects: null, timing: null,
+  });
+}
+
 function completeReport() {
   const specs = [];
   for (const engine of ['', 'firefox-']) {
     for (const device of ['desktop', 'mobile']) {
       for (const renderer of ['webgl2', 'canvas2d']) {
-        for (const { file, title, evidence } of requiredCases) {
+        for (const { file, title, evidence, quest } of requiredCases) {
           specs.push({
             file, title,
             tests: [{
@@ -28,7 +65,8 @@ function completeReport() {
                 retry: 0,
                 errors: [],
                 attachments: [
-                  ...['environment-capabilities', 'renderer-startup', ...evidence].map((name) => ({ name })),
+                  ...[...new Set(['environment-capabilities', 'renderer-startup', ...evidence])]
+                    .map((name) => quest ? questAttachment(name, quest, engine, device, renderer) : { name }),
                   browserErrors([]),
                 ],
               }],
@@ -45,13 +83,14 @@ const specs = (r) => r.suites[0].suites[0].specs;
 const firstTest = (r) => specs(r)[0].tests[0];
 const firstResult = (r) => firstTest(r).results[0];
 
-test('accepts the complete 72-case core and persistence matrix with evidence', () => {
+test('accepts the complete 112-case core, persistence and quest matrix with evidence', () => {
   const report = completeReport();
-  assert.equal(specs(report).length, 72);
+  assert.equal(specs(report).length, 112);
   assert.doesNotThrow(() => assertBrowserMatrix(report));
 });
 
 for (const [name, mutate] of [
+  ['previous 72-case release report', (r) => { r.suites[0].suites[0].specs = specs(r).filter((s) => !s.title.startsWith('storage faults:')); }],
   ['old core-only report', (r) => { r.suites[0].suites[0].specs = specs(r).filter((s) => s.file === 'journey.spec.ts'); }],
   ['out-of-scope WebKit project', (r) => { firstTest(r).projectName = 'webkit-desktop-webgl2'; }],
   ['omitted project', (r) => { specs(r).splice(0, requiredCases.length); }],
@@ -85,6 +124,50 @@ for (const [name, mutate] of [
     mutate(report);
     assert.throws(() => assertBrowserMatrix(report));
   });
+}
+
+for (const required of requiredCases.filter((item) => item.quest)) {
+  for (const [name, mutate] of [
+    ['skipped', (result) => { result.status = 'skipped'; }],
+    ['retry', (result) => { result.retry = 1; }],
+    ['fatal injected-storage error', (result) => {
+      result.attachments.splice(-1, 1, browserErrors(['SecurityError: Browser storage access denied\n at MissionTracker.save']));
+    }],
+    ['missing renderer payload', (result) => {
+      delete result.attachments.find((a) => a.name === 'renderer-startup').body;
+    }],
+    ['malformed storage payload', (result) => {
+      result.attachments.find((a) => a.name === 'storage-quest-baseline').body = 'invalid';
+    }],
+    ['ambiguous storage payload', (result) => {
+      result.attachments.push(result.attachments.find((a) => a.name === 'storage-quest-baseline'));
+    }],
+    ['changed stored bytes', (result) => {
+      const name = required.quest.mode ? 'storage-unsaved-after-reload' : 'storage-damaged-quests';
+      const a = result.attachments.find((a) => a.name === name);
+      const data = JSON.parse(Buffer.from(a.body, 'base64').toString());
+      data.quests = '{"version":1,"completed":["combo-20"]}';
+      Object.assign(a, jsonAttachment(name, data));
+    }],
+    ['untrusted lane input', (result) => {
+      const a = result.attachments.find((a) => a.name === 'trusted-lane-input');
+      Object.assign(a, jsonAttachment(a.name, { expected: 'touch', events: [] }));
+    }],
+    ['incorrect renderer', (result) => {
+      const a = result.attachments.find((a) => a.name === 'renderer-startup');
+      const data = JSON.parse(Buffer.from(a.body, 'base64').toString());
+      data.canvases[0].kind = 'webgl2';
+      Object.assign(a, jsonAttachment(a.name, data));
+    }],
+  ]) {
+    test(`rejects ${name}: ${required.title}`, () => {
+      const report = completeReport();
+      const result = specs(report).find((s) => s.title === required.title &&
+        s.tests[0].projectName === 'firefox-mobile-canvas2d').tests[0].results[0];
+      mutate(result);
+      assert.throws(() => assertBrowserMatrix(report));
+    });
+  }
 }
 
 for (const required of requiredCases) {

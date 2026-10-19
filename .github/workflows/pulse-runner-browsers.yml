@@ -7,6 +7,7 @@ on:
       - artifacts/pulse-runner/**
       - scripts/run-pulse-browser-matrix-linux.sh
       - scripts/assert-pulse-browser-matrix*.mjs
+      - scripts/pulse-quest-evidence.mjs
       - .github/workflows/pulse-runner-browsers.yml
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
@@ -18,6 +19,7 @@ on:
       - artifacts/pulse-runner/**
       - scripts/run-pulse-browser-matrix-linux.sh
       - scripts/assert-pulse-browser-matrix*.mjs
+      - scripts/pulse-quest-evidence.mjs
       - .github/workflows/pulse-runner-browsers.yml
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
@@ -36,7 +38,7 @@ jobs:
   browsers:
     name: Chromium and Firefox / Linux (Safari excluded)
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       CI: "1"
     steps:
@@ -63,7 +65,7 @@ jobs:
           pnpm --filter @workspace/pulse-runner run test:e2e:types
           pnpm --filter @workspace/pulse-runner run test:unit
           node --test scripts/assert-pulse-browser-matrix.test.mjs
-      - name: Run all 72 Chromium and Firefox core and personal-best cases with evidence
+      - name: Run all 112 Chromium and Firefox core, personal-best and quest storage cases with evidence
         run: bash scripts/run-pulse-browser-matrix-linux.sh
       - name: Retain browser evidence even when setup or assertions fail
         if: ${{ always() }}

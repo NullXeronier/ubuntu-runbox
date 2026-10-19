@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { assertQuestEvidence } from './pulse-quest-evidence.mjs';
 
 // Exact identities, not title prefixes or counts alone: a duplicated/substitute
-// journey must never stand in for the damaged-record regression.
+// journey must never stand in for a storage-fault regression.
 export const requiredCases = [
   {
     file: 'journey.spec.ts',
@@ -40,6 +41,28 @@ export const requiredCases = [
     file: 'best-persistence.spec.ts',
     title: `personal best: IndexedDB ${fault} preserves existing scores and shows a save warning`,
     evidence: ['renderer-startup'],
+  })),
+  ...['access denied', 'reads and writes denied', 'writes denied'].map((mode) => ({
+    file: 'journey.spec.ts',
+    title: `storage faults: ${mode} keeps gameplay and badges session-only without claiming persistence`,
+    quest: { mode },
+    evidence: [
+      'trusted-lane-input', 'storage-quest-baseline', 'storage-failed-quest-saves',
+      'storage-unsaved-after-reload', 'renderer-quest-session-results', 'renderer-storage-fault-reload',
+    ],
+  })),
+  ...[
+    { name: 'invalid JSON', raw: '{"version":1,"completed":' },
+    { name: 'unknown badge mixed with a known badge', raw: '{"version":1,"completed":["combo-20","unknown-badge"]}' },
+  ].map(({ name, raw }) => ({
+    file: 'journey.spec.ts',
+    title: `storage faults: ${name} warns without awarding badges and recovers only after a real completion`,
+    quest: { raw },
+    evidence: [
+      'trusted-lane-input', 'storage-quest-baseline', 'storage-damaged-quests',
+      'storage-repaired-quests', 'storage-repaired-quests-reload',
+      'renderer-quest-repaired-results', 'renderer-repaired-quests-reload',
+    ],
   })),
 ];
 
@@ -90,6 +113,15 @@ export function assertBrowserMatrix(report) {
           const browserErrors = attachments.filter((item) => item.name === 'browser-errors');
           assert.equal(browserErrors.length, 1, `${label}: ambiguous browser error evidence`);
           assert.deepEqual(attachmentJSON(browserErrors[0]), [], `${label}: fatal browser errors`);
+          if (required.quest) {
+            const evidence = new Map();
+            for (const name of ['environment-capabilities', 'renderer-startup', ...required.evidence]) {
+              const matches = attachments.filter((item) => item.name === name);
+              assert.equal(matches.length, 1, `${label}: missing evidence or ambiguous evidence: ${name}`);
+              evidence.set(name, attachmentJSON(matches[0]));
+            }
+            assertQuestEvidence(required.quest, evidence, test.projectName);
+          }
           const seen = projects.get(test.projectName);
           assert(!seen.has(required.title), `${label}: duplicate case`);
           seen.add(required.title);

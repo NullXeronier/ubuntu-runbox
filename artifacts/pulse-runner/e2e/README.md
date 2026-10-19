@@ -66,10 +66,24 @@ The release script accepts no test filters or unsupported-capability skips.
 It uses bundled Chromium and Firefox, starts the game
 from the checkout, and rejects launch failures, partial reports, retries,
 skipped cases, fatal browser errors, or missing native-audio/renderer/trusted-input
-evidence. All 72 cases must pass: four core journeys and five personal-best
-persistence cases in each of eight projects. The audit requires exact spec/title
-identities, including the damaged-record case, and a clean `browser-errors`
-attachment for every case; an old core-only report cannot certify this matrix.
+evidence. All 112 cases must pass: four core journeys, five personal-best
+persistence cases, and five quest storage-fault cases in each of eight projects.
+The release selection is `@cross-engine|@best-persistence|@quest-storage`.
+The quest cases cover denied storage access, denied reads/writes, denied writes,
+invalid JSON, and an unknown badge mixed with a known badge. Calibration,
+effects-storage faults, and additional personal-best/concurrency work are not
+added by this selection.
+
+The audit requires exact spec/title identities and a clean `browser-errors`
+attachment for every case; neither an old core-only nor a 72-case report can
+certify this matrix. Quest cases also require readable, unambiguous JSON payloads
+for Linux browser/audio capability, trusted input, real renderer draws at startup,
+results and reload, and before/after storage attempts and bytes. The denied cases
+start with an empty, non-canonical quest document (no seeded badges), proving
+failed saves leave existing bytes unchanged. Real completions earn session-only
+badges, retry removes “newly earned” status, and reload cannot retain unsaved
+badges. Malformed documents remain untouched on load/reload and incomplete
+gameplay; only a real completion repairs them, and that repair survives reload.
 Any missing Mesa/WebGL/native-audio capability is still a hard failure.
 
 On a dedicated Ubuntu 24.04 host, install Node 24 and pnpm 10.26.1, then:

@@ -393,12 +393,17 @@ for (const scenario of [
 }
 
 for (const mode of ['access denied', 'reads and writes denied', 'writes denied'] as const) {
-  test(`storage faults: ${mode} keeps gameplay and badges session-only without claiming persistence`, async ({ page }, info) => {
-    await injectStorageFault(page, mode === 'access denied'
+  test(`storage faults: ${mode} keeps gameplay and badges session-only without claiming persistence`, { tag: '@quest-storage' }, async ({ page }, info) => {
+    // A non-canonical empty document proves denied saves do not overwrite
+    // existing bytes, without seeding a badge instead of earning it.
+    const original = '{ "version": 1, "completed": [] }';
+    await injectStorageFault(page, { questData: original, ...(mode === 'access denied'
       ? { accessDenied: true }
-      : { denyReads: mode === 'reads and writes denied' ? 'all' : undefined, denyWrites: 'all' });
+      : { denyReads: mode === 'reads and writes denied' ? 'all' as const : undefined, denyWrites: 'all' as const }) });
     await openClockedGame(page, info);
     await expect(page.getByTestId('text-missions-count')).toHaveText('0 / 4 COMPLETE');
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBe(original);
+    await attachStorageEvidence(page, info, 'quest-baseline');
     const initiallyWarns = mode !== 'writes denied';
     if (initiallyWarns) {
       await expect(page.getByTestId('text-mission-error')).toBeVisible();
@@ -423,7 +428,7 @@ for (const mode of ['access denied', 'reads and writes denied', 'writes denied']
     await expect(page.getByTestId('panel-paused')).toHaveCount(0);
     await assertTrustedLaneInput(page, info);
     expect(await page.evaluate(() => window.__pulseProbe.audio.map((audio) => audio.state))).toEqual(['running']);
-    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBeNull();
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBe(original);
 
     await run.finish();
     await expect(page.getByTestId('text-final-score')).toHaveText('35,000');
@@ -439,6 +444,7 @@ for (const mode of ['access denied', 'reads and writes denied', 'writes denied']
     for (const id of ['perfect-40', 'score-100k']) {
       await expect(page.getByTestId(`result-mission-${id}`)).toContainText('INCOMPLETE');
     }
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBe(original);
     const attempts = await page.evaluate(() => window.__pulseStorageProbe.attempts);
     if (mode === 'access denied') expect(attempts.some((a) => a.operation === 'access' && a.denied)).toBe(true);
     else {
@@ -447,6 +453,7 @@ for (const mode of ['access denied', 'reads and writes denied', 'writes denied']
       expect(attempts.some((a) => a.operation === 'set' && a.key === 'pulse-missions' && a.denied)).toBe(true);
     }
     await attachStorageEvidence(page, info, 'failed-quest-saves');
+    await checkRenderer(page, info, 'quest-session-results', true);
     await info.attach('session-only-results', { body: await page.screenshot(), contentType: 'image/png' });
 
     // Retry preserves earned badges in memory, not their NEWLY EARNED flags.
@@ -465,11 +472,12 @@ for (const mode of ['access denied', 'reads and writes denied', 'writes denied']
     await expect(page.getByTestId('text-missions-count')).toHaveText('2 / 4 COMPLETE');
     await expect(page.getByTestId('text-mission-error')).toBeVisible();
     await expect(page.getByTestId('text-mission-error')).toHaveText(sessionOnlyQuests);
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBe(original);
     await page.reload();
     await expect(page.getByTestId('text-missions-count')).toHaveText('0 / 4 COMPLETE');
     for (const id of missionIds) await expect(page.getByTestId(`badge-complete-${id}`)).toHaveCount(0);
     await expect(page.getByTestId('text-best')).toHaveText('PERSONAL BEST --');
-    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBeNull();
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBe(original);
     if (initiallyWarns) await expect(page.getByTestId('text-mission-error')).toBeVisible();
     else await expect(page.getByTestId('text-mission-error')).toHaveCount(0);
     await attachStorageEvidence(page, info, 'unsaved-after-reload');
@@ -481,13 +489,15 @@ for (const damaged of [
   { name: 'invalid JSON', raw: '{"version":1,"completed":' },
   { name: 'unknown badge mixed with a known badge', raw: '{"version":1,"completed":["combo-20","unknown-badge"]}' },
 ]) {
-  test(`storage faults: ${damaged.name} warns without awarding badges and recovers only after a real completion`, async ({ page }, info) => {
+  test(`storage faults: ${damaged.name} warns without awarding badges and recovers only after a real completion`, { tag: '@quest-storage' }, async ({ page }, info) => {
     await injectStorageFault(page, { questData: damaged.raw });
     await openClockedGame(page, info);
     await expect(page.getByTestId('text-mission-error')).toBeVisible();
     await expect(page.getByTestId('text-mission-error')).toHaveText(unreadableQuests);
     await expect(page.getByTestId('text-missions-count')).toHaveText('0 / 4 COMPLETE');
     for (const id of missionIds) await expect(page.getByTestId(`badge-complete-${id}`)).toHaveCount(0);
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBe(damaged.raw);
+    await attachStorageEvidence(page, info, 'quest-baseline');
     // Simply opening/reloading must not silently replace damaged data or award
     // the valid-looking portion of an invalid document.
     await page.reload();
@@ -501,6 +511,8 @@ for (const damaged of [
     await expect(page.getByTestId('text-score')).toHaveText('1,000');
     await expect(page.getByTestId('text-hud-mission-error')).toBeVisible();
     expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBe(damaged.raw);
+    expect(await page.evaluate(() => window.__pulseStorageProbe.attempts.filter(
+      (attempt) => attempt.operation === 'set' && attempt.key === 'pulse-missions'))).toEqual([]);
     await assertTrustedLaneInput(page, info);
     await attachStorageEvidence(page, info, 'damaged-quests');
     await run.finish();
@@ -513,6 +525,7 @@ for (const damaged of [
     const repaired = await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'));
     expect(JSON.parse(repaired!)).toEqual({ version: 1, completed: ['first-run'] });
     await attachStorageEvidence(page, info, 'repaired-quests');
+    await checkRenderer(page, info, 'quest-repaired-results', true);
     await pressButton(page, info, 'button-menu');
     await page.reload();
     await expect(page.getByTestId('text-missions-count')).toHaveText('1 / 4 COMPLETE');
@@ -521,6 +534,8 @@ for (const damaged of [
     for (const id of missionIds.filter((id) => id !== 'first-run')) {
       await expect(page.getByTestId(`badge-complete-${id}`)).toHaveCount(0);
     }
+    expect(await page.evaluate(() => window.__pulseStorageProbe.readStored('pulse-missions'))).toBe(repaired);
+    await attachStorageEvidence(page, info, 'repaired-quests-reload');
     await checkRenderer(page, info, 'repaired-quests-reload', true);
   });
 }
