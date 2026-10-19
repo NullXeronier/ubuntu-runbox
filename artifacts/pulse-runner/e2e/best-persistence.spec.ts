@@ -4,7 +4,7 @@ import { databaseBest } from './best-database';
 
 const key = 'pulse-best:neon-drift:easy';
 
-test('personal best: legacy scores merge safely and a stale mirror cannot hide the committed best after reload', async ({ page, context }, info) => {
+test('personal best: legacy scores merge safely and a stale mirror cannot hide the committed best after reload', { tag: '@best-persistence' }, async ({ page, context }, info) => {
   const reader = await openStoragePage(context);
   await databaseBest(reader, key, 2000);
   await reader.evaluate((key) => localStorage.setItem(key, '5000'), key);
@@ -34,7 +34,7 @@ test('personal best: legacy scores merge safely and a stale mirror cannot hide t
   await reader.close();
 });
 
-test('personal best: a malformed authoritative record stays intact without leaking into other score buckets', async ({ page, context }, info) => {
+test('personal best: a malformed authoritative record stays intact without leaking into other score buckets', { tag: '@best-persistence' }, async ({ page, context }, info) => {
   const reader = await openStoragePage(context);
   const damaged = 'unrecognized';
   const legacy = '5000';
@@ -174,7 +174,7 @@ test('personal best: a malformed legacy record preserves the valid authoritative
 });
 
 for (const fault of ['unavailable', 'open denied', 'write denied'] as const) {
-  test(`personal best: IndexedDB ${fault} preserves existing scores and shows a save warning`, async ({ page, context }, info) => {
+  test(`personal best: IndexedDB ${fault} preserves existing scores and shows a save warning`, { tag: '@best-persistence' }, async ({ page, context }, info) => {
     const reader = await openStoragePage(context);
     await databaseBest(reader, key, 5000);
     await reader.evaluate((key) => localStorage.setItem(key, '5000'), key);

@@ -1,7 +1,58 @@
 # Browser regression verification — 2026-10-19
 
 
-## Current scope: Chromium and Firefox; Safari/WebKit excluded
+## Expanded release scope: core journeys and personal-best persistence
+
+The required release matrix is now **72 cases**: the four `@cross-engine`
+journeys plus all five `@best-persistence` cases in each of the eight
+Chromium/Firefox desktop/touch and WebGL2/Canvas2D projects. Safari/WebKit
+remains excluded. The five persistence cases cover legacy merging/stale
+mirrors, damaged authoritative records, and unavailable/open-denied/write-denied
+IndexedDB. Other storage and concurrent-tab cases remain outside this release
+selection.
+
+The evidence audit requires exact case identities and one successful attempt
+per case, including clean fatal-browser-error evidence. Missing/failed launches,
+skips, retries, omitted cases, missing attachments, and errors from closed or
+crashed tabs cannot certify a pass.
+
+**Release blocked: 64 passed, 8 failed, zero skips or retries.** All 72 cases
+executed in [the Ubuntu verification run](https://github.com/NullXeronier/ubuntu-runbox/actions/runs/39233336292)
+on 2026-10-19, against snapshot `a375d28259081f9147c6c60f556bf586f4b60870`,
+using Playwright 1.64.0, Chromium 156.0.8078.4 and Firefox 157.0. The browser
+portion took 6.3 minutes. Both typechecks, the game unit suite and all 50
+evidence-audit unit tests passed.
+
+- All 32 original core cases passed.
+- The damaged authoritative-record regression passed in **all eight projects**,
+  including Firefox desktop/touch under WebGL2 and Canvas2D.
+- All legacy/stale-mirror and IndexedDB write-denial cases passed.
+- The IndexedDB **unavailable** and **open denied** cases failed in all four
+  Firefox projects (eight failures). Their gameplay/storage/warning assertions
+  completed, but the fatal-error fixture caught uncaught errors. Chromium passed
+  these cases.
+- The captured stacks identify the application save path (`persistBest` through
+  `saveBest`/`finish`), not proven development-tool noise. The error messages are
+  `TypeError: can't access property "open", indexedDB is undefined` and
+  `SecurityError: Database access denied`. No suppression, retry, skip, or
+  renderer substitution was added.
+- The Linux command exited nonzero. Running the evidence audit against the
+  downloaded report also rejected it at the first failed Firefox case.
+
+Reports, screenshots, traces and native runtime logs are attached to that run
+(14-day retention), and the downloaded evidence is under
+`generated-artifacts/pulse-release-check/evidence/` (ignored by Git). The
+runner/evidence-gate extension is complete, but **there is no passing 72-case
+release certification**. The next release blocker is to investigate Firefox's
+rejected save/error propagation in `src/game/best.ts` and `src/game/engine.ts`,
+preserving stored scores, warning behavior and fatal-error assertions, then
+rerun the matrix. No application error-handling change was made in this
+verification-only work.
+
+The earlier 32-case pass below is historical core-only evidence, not a pass for
+this expanded matrix.
+
+## Previous core-only verification: Chromium and Firefox; Safari/WebKit excluded
 
 **Verified after integrating newer main-branch changes: 32/32 passed in 3.2
 minutes, zero failures, skips or retries.**
@@ -35,8 +86,8 @@ installation and error capture are retained for new tabs.
 The earlier pre-integration run also passed all 32 cases:
 [initial successful run](https://github.com/NullXeronier/ubuntu-runbox/actions/runs/38536828494).
 
-The user explicitly excluded Safari/WebKit. The required release matrix now
-contains 32 cases in eight Chromium/Firefox projects. The initial Ubuntu run
+The user explicitly excluded Safari/WebKit. That release matrix
+contained 32 cases in eight Chromium/Firefox projects. The initial Ubuntu run
 was cancelled during WebKit execution after the scope change, not counted as a
 passing release. Its completed Chromium/Firefox cases had 31 passes and one
 test-harness failure: a 100 ms `clock.pauseAt` target expired before the protocol
@@ -50,7 +101,7 @@ the Ubuntu workflow. The earlier connection blocker is resolved.
 ## Historical investigation (before scope change)
 
 The notes below describe superseded local setup attempts and the original
-three-engine scope. The verified result and scope above are authoritative.
+three-engine scope. The expanded release scope above is authoritative.
 
 ### Linux runner follow-up
 

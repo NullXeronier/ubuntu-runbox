@@ -64,8 +64,12 @@ personal desktop's default audio server.
 
 The release script accepts no test filters or unsupported-capability skips.
 It uses bundled Chromium and Firefox, starts the game
-from the checkout, and rejects partial reports, retries, skipped cases or
-missing native-audio/renderer/trusted-input evidence. All 32 cases must pass.
+from the checkout, and rejects launch failures, partial reports, retries,
+skipped cases, fatal browser errors, or missing native-audio/renderer/trusted-input
+evidence. All 72 cases must pass: four core journeys and five personal-best
+persistence cases in each of eight projects. The audit requires exact spec/title
+identities, including the damaged-record case, and a clean `browser-errors`
+attachment for every case; an old core-only report cannot certify this matrix.
 Any missing Mesa/WebGL/native-audio capability is still a hard failure.
 
 On a dedicated Ubuntu 24.04 host, install Node 24 and pnpm 10.26.1, then:
@@ -138,13 +142,14 @@ canceled, uncommitted higher score must not be counted as saved. Fresh-reader
 and reload checks require the canonical IndexedDB maximum and compatibility
 mirror to agree. Each game tab must pass renderer and trusted-input checks;
 the surviving writer and reloaded saved best also have renderer evidence.
-The fixture's main game page stays alive so fatal errors collected from all
-tabs, including closed tabs, remain checked at teardown.
+Fatal errors collected from all tabs, including closed or crashed tabs,
+remain checked and attached at teardown even if the main game page closes.
 Storage-only helpers never load the app, Three.js, or audio. It also covers
 missing/rejected locks and denied reads without losing results.
 `best-persistence.spec.ts` additionally covers legacy import, authoritative
-reload despite a stale mirror, track/difficulty isolation, and missing,
-open-denied, or write-denied IndexedDB while preserving existing scores.
+reload despite a stale mirror, damaged authoritative records without overwriting
+either store, track/difficulty isolation, and missing, open-denied, or
+write-denied IndexedDB while preserving existing scores.
 
 ## Required matrix
 
@@ -163,10 +168,13 @@ Firefox's mobile rows use a narrow viewport and native trusted touch;
 `isMobile` is intentionally off because Playwright Firefox does not implement
 mobile layout emulation. These rows do not certify Android Firefox or hardware.
 
-The four core journeys tagged `@cross-engine` run in every project (32 cases)
-in the dedicated Linux workflow. The unfiltered `test:e2e` command also retains
-all storage, personal-best and concurrent-tab tests added separately; a passing
-core matrix does not certify those additional cases.
+The dedicated Linux workflow selects `@cross-engine|@best-persistence`: four core
+journeys (32 cases) plus all five cases in `best-persistence.spec.ts` (40 cases).
+Each runs in every project, for **72 required passes**. When adding a personal-best
+case, retain its release tag and update the explicit inventory/evidence in
+`scripts/assert-pulse-browser-matrix.mjs`. The unfiltered `test:e2e` command also
+retains the other storage and concurrent-tab tests; this release matrix does not
+certify those additional cases.
 Nothing is silently
 skipped or downgraded when WebGL fails. Chromium WebGL projects enable
 ANGLE/SwiftShader: this is

@@ -104,6 +104,7 @@ export const test = base.extend<{ guard: void }>({
     const errors: string[] = [];
     const watch = (target: Page) => {
       target.on('pageerror', (error) => errors.push(error.stack ?? error.message));
+      target.on('crash', () => errors.push(`Browser page crashed: ${target.url()}`));
       target.on('console', (message) => {
         if (message.type() === 'error') errors.push(message.text());
       });
@@ -159,10 +160,9 @@ export const test = base.extend<{ guard: void }>({
       }, true);
     }, { forcedCanvas: info.project.metadata.renderer === 'canvas2d' });
     await use();
-    if (!page.isClosed()) {
-      await info.attach('browser-errors', { body: JSON.stringify(errors, null, 2), contentType: 'application/json' });
-      expect(errors, 'No uncaught JS, WebGL shader, or console errors').toEqual([]);
-    }
+    // Closed/crashed pages (including helper tabs) must not bypass the guard.
+    await info.attach('browser-errors', { body: JSON.stringify(errors, null, 2), contentType: 'application/json' });
+    expect(errors, 'No uncaught JS, browser crashes, WebGL shader, or console errors').toEqual([]);
   }, { auto: true }],
 });
 
