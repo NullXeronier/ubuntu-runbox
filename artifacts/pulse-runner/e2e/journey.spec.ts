@@ -53,7 +53,7 @@ test('personal best: external saves update an already open menu for the matching
   await other.close();
 });
 
-test('native-clock renderer/audio startup and visible countdown reach gameplay', async ({ page }, info) => {
+test('native-clock renderer/audio startup and visible countdown reach gameplay', { tag: '@cross-engine' }, async ({ page }, info) => {
   await page.goto('./');
   await expect(page.getByTestId('text-missions-count')).toHaveText('0 / 4 COMPLETE');
   await checkRenderer(page, info, 'native-clock');
@@ -63,13 +63,22 @@ test('native-clock renderer/audio startup and visible countdown reach gameplay',
   await expect(page.getByTestId('text-countdown')).toBeHidden({ timeout: 8_000 });
   await expect(page.getByTestId('button-pause')).toBeVisible();
   expect(await page.evaluate(() => window.__pulseProbe.audio.map((audio) => audio.state))).toEqual(['running']);
+  const audioStart = await page.evaluate(() => window.__pulseProbe.audio[0]!.currentTime);
+  await expect.poll(() => page.evaluate(() => window.__pulseProbe.audio[0]!.currentTime))
+    .toBeGreaterThan(audioStart + 0.05);
+  await info.attach('native-audio', {
+    body: JSON.stringify(await page.evaluate(() => window.__pulseProbe.audio.map((audio) => ({
+      state: audio.state, currentTime: audio.currentTime, sampleRate: audio.sampleRate,
+    }))), null, 2),
+    contentType: 'application/json',
+  });
   await checkRenderer(page, info, 'native-playing');
   await info.attach('native-playing', { body: await page.screenshot(), contentType: 'image/png' });
   await pressButton(page, info, 'button-pause');
   await expect(page.getByTestId('panel-paused')).toBeVisible();
 });
 
-test('real lane inputs advance live quests; new badges become already earned after retry and survive reload', async ({ page }, info) => {
+test('real lane inputs advance live quests; new badges become already earned after retry and survive reload', { tag: '@cross-engine' }, async ({ page }, info) => {
   await openClockedGame(page, info);
   await pressButton(page, info, 'button-difficulty-easy');
   const run = await RunDriver.start(page, info);
@@ -150,7 +159,7 @@ test('real lane inputs advance live quests; new badges become already earned aft
   await checkRenderer(page, info, 'reload', true);
 });
 
-test('pause/resume freezes progress; restart/quit reset unfinished quests but keep earned badges', async ({ page }, info) => {
+test('pause/resume freezes progress; restart/quit reset unfinished quests but keep earned badges', { tag: '@cross-engine' }, async ({ page }, info) => {
   await openClockedGame(page, info);
   await pressButton(page, info, 'button-difficulty-easy');
   let run = await RunDriver.start(page, info, 'button-start', info.project.metadata.input === 'keyboard');
@@ -213,7 +222,7 @@ test('pause/resume freezes progress; restart/quit reset unfinished quests but ke
   await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'true');
 });
 
-test('reduced-motion default and explicit effects choice survive reload without changing renderers', async ({ page }, info) => {
+test('reduced-motion default and explicit effects choice survive reload without changing renderers', { tag: '@cross-engine' }, async ({ page }, info) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('./');
   await expect(page.getByTestId('switch-reduced-effects')).toHaveAttribute('aria-checked', 'true');
@@ -578,4 +587,3 @@ test('storage faults: effects save failure warns but applies for the session wit
   await expect(page.getByTestId('badge-complete-first-run')).toHaveText('DONE');
   await checkRenderer(page, info, 'unsaved-effects-reload', true);
 });
-

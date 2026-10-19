@@ -1,4 +1,4 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, type Project } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 
@@ -10,6 +10,44 @@ const systemChromium = process.env.PATH?.split(delimiter)
   .map((directory) => join(directory, 'chromium')).find((file) => existsSync(file));
 const executablePath = process.env.PULSE_E2E_CHROMIUM ??
   (process.env.REPL_ID ? systemChromium : undefined);
+const headed = process.env.PULSE_E2E_HEADED === '1';
+
+if (process.env.CI && process.env.PULSE_E2E_ALLOW_UNSUPPORTED === '1') {
+  throw new Error('PULSE_E2E_ALLOW_UNSUPPORTED is diagnostic-only and forbidden in CI.');
+}
+
+// Safari/WebKit is excluded from the requested release scope.
+const projects: Project[] = (['chromium', 'firefox'] as const).flatMap((browserName) =>
+  (['desktop', 'mobile'] as const).flatMap((device) =>
+    (['webgl2', 'canvas2d'] as const).map((renderer) => ({
+      // Preserve the original Chromium project names for existing commands.
+      name: `${browserName === 'chromium' ? '' : `${browserName}-`}${device}-${renderer}`,
+      metadata: {
+        engine: browserName,
+        renderer,
+        input: device === 'mobile' ? 'touch' : 'keyboard',
+        contextPolicy: renderer === 'canvas2d' ? 'injected-context-denial' : 'native',
+      },
+      use: {
+        browserName,
+        viewport: device === 'mobile' ? { width: 375, height: 812 } : { width: 1280, height: 800 },
+        // Firefox supports trusted touch, but not mobile layout emulation.
+        // Its small viewport is deliberately not claimed as Android coverage.
+        isMobile: device === 'mobile' && browserName !== 'firefox',
+        hasTouch: device === 'mobile',
+        deviceScaleFactor: 1,
+        launchOptions: browserName === 'chromium' ? {
+          executablePath,
+          headless: !headed,
+          args: [
+            '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl',
+            '--enable-unsafe-swiftshader', '--disable-gpu-sandbox',
+          ],
+        } : { headless: !headed },
+      },
+    })),
+  ),
+);
 
 export default defineConfig({
   testDir: './e2e',
@@ -28,33 +66,11 @@ export default defineConfig({
   ],
   use: {
     baseURL: externalURL ?? localURL,
-    browserName: 'chromium',
     reducedMotion: 'no-preference',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    // Optional system Chromium for environments that cannot download browsers.
-    launchOptions: { executablePath },
   },
-  projects: [
-    ...(['desktop', 'mobile'] as const).flatMap((device) =>
-      (['webgl2', 'canvas2d'] as const).map((renderer) => ({
-        name: `${device}-${renderer}`,
-        metadata: { renderer, input: device === 'mobile' ? 'touch' : 'keyboard' },
-        use: {
-          viewport: device === 'mobile' ? { width: 375, height: 812 } : { width: 1280, height: 800 },
-          isMobile: device === 'mobile',
-          hasTouch: device === 'mobile',
-          deviceScaleFactor: 1,
-          launchOptions: {
-            executablePath,
-            args: renderer === 'webgl2'
-              ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl', '--enable-unsafe-swiftshader', '--disable-gpu-sandbox']
-              : ['--disable-webgl', '--disable-webgl2'],
-          },
-        },
-      })),
-    ),
-  ],
+  projects,
   // Reuse the managed workflow locally; start the same command on clean CI.
   // An external target is never replaced by a second server.
   webServer: externalURL ? undefined : {

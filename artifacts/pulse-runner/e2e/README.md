@@ -1,25 +1,10 @@
 # Playable Pulse Runner regression tests
 
-## Personal-best browser support
-
-Personal-best writes require the native Web Locks API in a secure context
-(HTTPS or localhost): Chromium 69+, Firefox 96+, Safari 15.4+. All tabs running
-this version serialize the entire read/compare/write under the same per-score
-exclusive lock. Older already-open app versions must be reloaded to cooperate.
-If locks are unavailable/rejected, or storage cannot be read/written, results
-and earned session badges remain playable and the existing save warning appears.
-There is intentionally no unlocked persistence fallback.
-
-`concurrent-best.spec.ts` holds a real origin lock in a third tab until both
-finished runs have queued saves, tests both score orderings with storage events
-suppressed, and checks the final persisted maximum after both writers drain.
-It also covers missing/rejected locks and denied reads without losing results.
-
 Run from the workspace root:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm --filter @workspace/pulse-runner exec playwright install chromium
+pnpm --filter @workspace/pulse-runner exec playwright install chromium firefox
 pnpm --filter @workspace/pulse-runner run test:unit
 pnpm --filter @workspace/pulse-runner run test:e2e:types
 pnpm --filter @workspace/pulse-runner run test:e2e
@@ -35,14 +20,85 @@ URL **with a trailing slash**, including any artifact base path. For example,
 `PULSE_E2E_BASE_URL="https://<development-domain>/"`. The tests use relative
 navigation and will not start a replacement server in this mode. If Chromium
 is supplied by the environment, `PULSE_E2E_CHROMIUM` can name its executable.
-On Linux outside Replit, install Playwright's documented Chromium OS libraries
-as part of CI setup as well as downloading its browser.
+On supported Linux CI hosts, install Playwright's documented OS libraries for
+both required engines as well as downloading their version-matched browsers:
+
+```sh
+pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox
+CI=1 pnpm --filter @workspace/pulse-runner run test:e2e
+```
+
+The lockfile currently resolves Playwright 1.64.0: its bundled engines are
+Chromium 156.0.8078.4 and Firefox 157.0 (revision 1555). Browser-version attachments record
+what actually ran, including any system Chromium override. Do not reuse an
+older Nix Playwright bundle with the newer driver: browser protocols differ.
+Safari/WebKit is explicitly excluded at the user's request. No Safari or iPhone coverage is claimed.
 
 On Replit/NixOS the config automatically uses the `chromium` installed by this
 project's Nix packages, with its runtime-library wrapper. A downloaded Linux
 Playwright binary alone can fail to find `libglib-2.0.so.0` on NixOS. Outside
 Replit the default remains Playwright's version-matched Chromium; the explicit
-executable override takes precedence everywhere.
+executable override takes precedence everywhere. This Chromium exception must
+not leak into Firefox launch options. Firefox uses the
+version-matched bundled executable, not ordinary system Firefox.
+
+Downloading these bundles does not install their runtime libraries on NixOS.
+If Firefox cannot launch or create a page, the result is a browser setup
+failure, not an application regression, and not passing coverage. Run the same
+matrix on a supported host with its dependencies; never substitute an older
+incompatible browser or remove a failing project from the release command.
+
+## Dedicated Linux release runner
+
+`.github/workflows/pulse-runner-browsers.yml` provides an Ubuntu 24.04 GitHub
+Actions job on relevant pushes/PRs and manual dispatch. It installs the locked
+dependencies and version-matched browsers with their OS libraries, checks types
+and units, and runs `bash scripts/run-pulse-browser-matrix-linux.sh`.
+
+The script uses a private native PulseAudio server with a null output sink and
+headed browsers under Xvfb/Mesa llvmpipe. This enables native audio-clock and
+software-backed real WebGL checks without speakers or a physical GPU. It does
+not fake Web Audio, clocks, game state, shaders or draw calls. The audio server
+and temporary socket are cleaned up on exit; the runner does not alter a
+personal desktop's default audio server.
+
+The release script accepts no test filters or unsupported-capability skips.
+It uses bundled Chromium and Firefox, starts the game
+from the checkout, and rejects partial reports, retries, skipped cases or
+missing native-audio/renderer/trusted-input evidence. All 32 cases must pass.
+Any missing Mesa/WebGL/native-audio capability is still a hard failure.
+
+On a dedicated Ubuntu 24.04 host, install Node 24 and pnpm 10.26.1, then:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm --filter @workspace/pulse-runner exec playwright install --with-deps chromium firefox
+sudo apt-get update
+sudo apt-get install -y xvfb xauth mesa-utils libgl1-mesa-dri libegl-mesa0 pulseaudio pulseaudio-utils
+bash scripts/run-pulse-browser-matrix-linux.sh
+```
+
+GitHub retains the full Playwright report and the Linux runtime/audio/graphics
+logs for 14 days, including on failure. Runtime logs are under
+`generated-artifacts/pulse-runner-linux/`; browser evidence remains under
+`generated-artifacts/pulse-runner/`. Adding a workflow is not execution evidence:
+the repository must be connected and the actual runner result inspected before
+claiming Firefox verification.
+
+## Personal-best browser support
+
+Personal-best writes require the native Web Locks API in a secure context
+(HTTPS or localhost): Chromium 69+, Firefox 96+, Safari 15.4+. All tabs running
+this version serialize the entire read/compare/write under the same per-score
+exclusive lock. Older already-open app versions must be reloaded to cooperate.
+If locks are unavailable/rejected, or storage cannot be read/written, results
+and earned session badges remain playable and the existing save warning appears.
+There is intentionally no unlocked persistence fallback.
+
+`concurrent-best.spec.ts` holds a real origin lock in a third tab until both
+finished runs have queued saves, tests both score orderings with storage events
+suppressed, and checks the final persisted maximum after both writers drain.
+It also covers missing/rejected locks and denied reads without losing results.
 
 ## Required matrix
 
@@ -52,19 +108,66 @@ executable override takes precedence everywhere.
 | desktop-canvas2d | 1280 × 800 | D/F/J/K and arrow keys | Canvas2D compatibility |
 | mobile-webgl2 | 375 × 812 | Trusted touchscreen taps on pads | Actual Three.js WebGL2 |
 | mobile-canvas2d | 375 × 812 | Trusted touchscreen taps on pads | Canvas2D compatibility |
+| firefox-desktop-webgl2 | 1280 × 800 | D/F/J/K and arrow keys | Actual Three.js WebGL2 |
+| firefox-desktop-canvas2d | 1280 × 800 | D/F/J/K and arrow keys | Canvas2D compatibility |
+| firefox-mobile-webgl2 | 375 × 812 | Trusted touchscreen taps on pads | Actual Three.js WebGL2 |
+| firefox-mobile-canvas2d | 375 × 812 | Trusted touchscreen taps on pads | Canvas2D compatibility |
 
-All seventeen journeys run in every project (68 test cases). Nothing is skipped
-when WebGL fails. WebGL projects enable Chromium ANGLE/SwiftShader: this is
+Firefox's mobile rows use a narrow viewport and native trusted touch;
+`isMobile` is intentionally off because Playwright Firefox does not implement
+mobile layout emulation. These rows do not certify Android Firefox or hardware.
+
+The four core journeys tagged `@cross-engine` run in every project (32 cases)
+in the dedicated Linux workflow. The unfiltered `test:e2e` command also retains
+all storage, personal-best and concurrent-tab tests added separately; a passing
+core matrix does not certify those additional cases.
+Nothing is silently
+skipped or downgraded when WebGL fails. Chromium WebGL projects enable
+ANGLE/SwiftShader: this is
 software-backed **real WebGL2**, including Three.js startup, GLSL compilation,
 and draw calls, not a CPU projection check. It does not certify physical GPU
-drivers or device audio latency. Compatibility projects disable WebGL using
-browser launch flags, not by changing the app's capability check.
+drivers or device audio latency. Firefox requests its native WebGL2,
+without Chromium flags or executable overrides.
+
+Every compatibility project uses explicit fault injection: an init script
+rejects `getContext('webgl2'/'webgl'/'experimental-webgl')` at the browser API
+boundary. Actual Canvas2D paint calls and rejected context requests are required.
+This exercises the production fallback without changing the app's capability
+check. Reports label this **injected-context-denial**, not a claim that the
+engine naturally lacks WebGL. WebGL projects never install that denial.
 
 Every test has a context/draw-call probe. Reports assert which connected canvas
 actually drew, check nonzero dimensions, and for WebGL check the native version,
 context-loss state, and GL error. The compatibility run also asserts that a
-fresh native `getContext('webgl2')` fails. Renderer evidence is printed and
+fresh `getContext('webgl2')` fails under the recorded denial policy. Renderer evidence is printed and
 attached to the report; console/uncaught errors fail a test.
+
+## Unsupported hosts versus application failures
+
+Before loading any application code or installing instrumentation, each test
+probes a disposable blank document in its configured engine/device context.
+`environment-capabilities` records browser version, native WebGL2 availability,
+version/error/loss state, user agent, touch capability, and native audio state,
+sample rate and advancing clock after a trusted mouse/touch gesture. This
+isolates a genuinely missing graphics/audio capability from game startup,
+shader, input or scoring failures.
+
+- **Default/release mode:** missing required capabilities fail explicitly.
+  Browser launch/page-creation errors also fail; they are never caught and
+  converted into app passes.
+- **Local diagnostics only:** `PULSE_E2E_ALLOW_UNSUPPORTED=1` permits an explicit
+  SKIP only when the blank-page probe establishes a missing capability. The
+  report includes `unsupported-environment` with the reason. It does not
+  select Canvas2D in a WebGL project or suppress later application failures.
+  This setting is forbidden in CI; skips do not count as release evidence.
+- **App failure:** if the blank-page capability exists but the game falls back,
+  fails to create its Three.js context, fails shaders/draws, fails to resume
+  audio, or misses a journey assertion, the test fails even in diagnostics.
+
+For hosts that only expose graphics with a display, use a display-equipped
+runner and `PULSE_E2E_HEADED=1` (on Linux, under an appropriately configured
+Xvfb/Mesa setup). Capability checks still apply; headed mode never fabricates
+WebGL support. Audible output and physical latency remain outside these tests.
 
 ## What runs
 
@@ -144,6 +247,9 @@ screenshots. The same console/uncaught-error guard applies to all fault cases.
 pnpm --filter @workspace/pulse-runner run test:e2e:report
 # Focus on a particular renderer/device without changing the suite:
 pnpm --filter @workspace/pulse-runner run test:e2e --project=mobile-webgl2
+pnpm --filter @workspace/pulse-runner run test:e2e --project=firefox-desktop-webgl2 --project=firefox-mobile-canvas2d
+# Local-only explicit unsupported capability reporting; not release evidence:
+PULSE_E2E_ALLOW_UNSUPPORTED=1 pnpm --filter @workspace/pulse-runner run test:e2e
 ```
 
 `generated-artifacts/pulse-runner/` contains the HTML report, machine-readable
