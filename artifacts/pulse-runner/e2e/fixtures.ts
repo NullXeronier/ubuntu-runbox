@@ -1,11 +1,25 @@
-import { test as base, expect, type Page, type TestInfo } from '@playwright/test';
 import { checkCapabilities } from './capabilities';
+import { test as base, expect, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
 
 type DrawRecord = {
   kind: string;
   canvas: HTMLCanvasElement;
   context: RenderingContext;
   draws: number;
+};
+
+type StorageAttempt = {
+  operation: 'access' | 'get' | 'set';
+  key: string | null;
+  denied: boolean;
+};
+
+type StorageFault = {
+  accessDenied?: boolean;
+  denyReads?: 'all' | string[];
+  denyWrites?: 'all' | string[];
+  questData?: string;
+  timingData?: string;
 };
 
 declare global {
@@ -17,18 +31,87 @@ declare global {
       deniedContexts: string[];
       forcedCanvas: boolean;
     };
+    __pulseStorageProbe: {
+      attempts: StorageAttempt[];
+      readStored: (key: string) => string | null;
+    };
   }
 }
 
+/**
+ * Install before navigation, including reloads. Only the browser storage boundary
+ * is faulted; the production tracker, scoring, and input handlers stay untouched.
+ * Native reads let assertions distinguish a session badge from a saved badge.
+ */
+export async function injectStorageFault(page: Page, fault: StorageFault) {
+  await page.addInitScript((options: StorageFault) => {
+    const storage = window.localStorage;
+    const nativeGet = Storage.prototype.getItem;
+    const nativeSet = Storage.prototype.setItem;
+    const probe = window.__pulseStorageProbe = {
+      attempts: [] as StorageAttempt[],
+      readStored: (key: string) => nativeGet.call(storage, key),
+    };
+    // Never overwrite repaired data on reload, or seed a completed badge.
+    if (options.questData !== undefined && nativeGet.call(storage, 'pulse-missions') === null) {
+      nativeSet.call(storage, 'pulse-missions', options.questData);
+    }
+    if (options.timingData !== undefined && nativeGet.call(storage, 'pulse-timing-offset-ms') === null) {
+      nativeSet.call(storage, 'pulse-timing-offset-ms', options.timingData);
+    }
+    if (options.accessDenied) {
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get() {
+          probe.attempts.push({ operation: 'access', key: null, denied: true });
+          throw new DOMException('Browser storage access denied', 'SecurityError');
+        },
+      });
+      return;
+    }
+    const denied = (rule: 'all' | string[] | undefined, key: string) =>
+      rule === 'all' || (rule?.includes(key) ?? false);
+    Storage.prototype.getItem = function (key: string) {
+      if (this !== storage) return nativeGet.call(this, key);
+      const blocked = denied(options.denyReads, key);
+      probe.attempts.push({ operation: 'get', key, denied: blocked });
+      if (blocked) throw new DOMException('Browser storage read denied', 'SecurityError');
+      return nativeGet.call(this, key);
+    };
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (this !== storage) return nativeSet.call(this, key, value);
+      const blocked = denied(options.denyWrites, key);
+      probe.attempts.push({ operation: 'set', key, denied: blocked });
+      if (blocked) throw new DOMException('Browser storage write denied', 'QuotaExceededError');
+      return nativeSet.call(this, key, value);
+    };
+  }, fault);
+}
+
+export async function attachStorageEvidence(page: Page, info: TestInfo, label: string) {
+  const evidence = await page.evaluate(() => ({
+    attempts: window.__pulseStorageProbe.attempts,
+    quests: window.__pulseStorageProbe.readStored('pulse-missions'),
+    effects: window.__pulseStorageProbe.readStored('pulse-reduced-effects'),
+    timing: window.__pulseStorageProbe.readStored('pulse-timing-offset-ms'),
+  }));
+  await info.attach(`storage-${label}`, { body: JSON.stringify(evidence, null, 2), contentType: 'application/json' });
+}
+
 export const test = base.extend<{ guard: void }>({
-  guard: [async ({ page, browser }, use, info) => {
+  guard: [async ({ page, context, browser }, use, info) => {
     await checkCapabilities(page, browser, info);
     const errors: string[] = [];
-    page.on('pageerror', (error) => errors.push(error.message));
-    page.on('console', (message) => {
-      if (message.type() === 'error') errors.push(message.text());
-    });
-    await page.addInitScript(({ forcedCanvas }) => {
+    const watch = (target: Page) => {
+      target.on('pageerror', (error) => errors.push(error.stack ?? error.message));
+      target.on('crash', () => errors.push(`Browser page crashed: ${target.url()}`));
+      target.on('console', (message) => {
+        if (message.type() === 'error') errors.push(message.text());
+      });
+    };
+    watch(page);
+    context.on('page', watch);
+    await context.addInitScript(({ forcedCanvas }) => {
       const probe = window.__pulseProbe = {
         contexts: [] as DrawRecord[],
         audio: [] as AudioContext[],
@@ -77,14 +160,33 @@ export const test = base.extend<{ guard: void }>({
       }, true);
     }, { forcedCanvas: info.project.metadata.renderer === 'canvas2d' });
     await use();
-    if (!page.isClosed()) {
-      await info.attach('browser-errors', { body: JSON.stringify(errors, null, 2), contentType: 'application/json' });
-      expect(errors, 'No uncaught JS, WebGL shader, or console errors').toEqual([]);
-    }
+    // Closed/crashed pages (including helper tabs) must not bypass the guard.
+    await info.attach('browser-errors', { body: JSON.stringify(errors, null, 2), contentType: 'application/json' });
+    expect(errors, 'No uncaught JS, browser crashes, WebGL shader, or console errors').toEqual([]);
   }, { auto: true }],
 });
 
 export { expect };
+
+/** Same-origin storage/lock access without loading another animated game. */
+export async function openStoragePage(context: BrowserContext) {
+  const page = await context.newPage();
+  await page.route('**/*', (route) => route.fulfill({
+    contentType: 'text/html', body: '<!doctype html><title>Storage test helper</title>',
+  }));
+  await page.goto('./');
+  await expect(page.locator('canvas, script')).toHaveCount(0);
+  return page;
+}
+
+/** Model a delayed storage notification without changing native stored data. */
+export async function delayBestNotifications(page: Page) {
+  await page.addInitScript(() => {
+    window.addEventListener('storage', (event) => {
+      if (event.key?.startsWith('pulse-best:')) event.stopImmediatePropagation();
+    }, true);
+  });
+}
 
 export async function pressButton(page: Page, info: TestInfo, id: string) {
   const button = page.getByTestId(id);
@@ -96,6 +198,10 @@ export async function pressButton(page: Page, info: TestInfo, id: string) {
 }
 
 export async function checkRenderer(page: Page, info: TestInfo, label: string, clocked = false) {
+  // Native rAF and canvas sizing can be deferred in background tabs. Do not
+  // disable browser throttling or the game's real visibility/blur handlers.
+  await page.bringToFront();
+  await expect.poll(() => page.evaluate(() => document.visibilityState)).toBe('visible');
   const expected = info.project.metadata.renderer as string;
   await expect.poll(async () => {
     // A reload reinstalls the init scripts, but Playwright's paused clock stays
@@ -148,6 +254,8 @@ export async function checkRenderer(page: Page, info: TestInfo, label: string, c
   });
 }
 
+const clockedContexts = new WeakSet<BrowserContext>();
+
 /**
  * Native Web Audio is still created/resumed and the real SynthMusic, engine,
  * beatmap, DOM handlers, scoring, and storage run. Only its clock getter follows
@@ -156,7 +264,17 @@ export async function checkRenderer(page: Page, info: TestInfo, label: string, c
  * The separate startup test uses the untouched native audio clock.
  */
 export async function openClockedGame(page: Page, info: TestInfo) {
-  await page.clock.install();
+  await page.bringToFront();
+  const context = page.context();
+  // page.clock controls the ENTIRE context, not just this page. Install and
+  // pause once, before any game loads, so background games never free-run while
+  // another compiles shaders. Subsequent tabs inherit this same paused clock;
+  // reinstalling would reset wall time in the existing tabs as well.
+  if (!clockedContexts.has(context)) {
+    await context.clock.install();
+    await context.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
+    clockedContexts.add(context);
+  }
   await page.addInitScript(() => {
     const descriptor = Object.getOwnPropertyDescriptor(AudioContext.prototype, 'currentTime') ??
       Object.getOwnPropertyDescriptor(BaseAudioContext.prototype, 'currentTime');
@@ -176,14 +294,11 @@ export async function openClockedGame(page: Page, info: TestInfo) {
   });
   await page.goto('./');
   await expect(page.getByTestId('button-start')).toBeVisible();
-  await checkRenderer(page, info, 'startup');
+  // Advance the shared clock in bounded steps to prove real renderer frames.
+  await checkRenderer(page, info, 'startup', true);
   // Animation scheduling is not the feature under test. Keep UI stable while
   // time is paused without changing the game's reduced-effects preference.
   await page.addStyleTag({ content: '*,*::before,*::after{animation:none!important;transition:none!important}' });
-  // pauseAt jumps immediately; this is virtual time, not a real-time wait.
-  // Use the full test-timeout margin so a slow CI protocol round-trip cannot
-  // turn the sampled target into a timestamp in the past. No run has started.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000));
 }
 
 export async function assertTrustedLaneInput(page: Page, info: TestInfo) {
@@ -196,4 +311,17 @@ export async function assertTrustedLaneInput(page: Page, info: TestInfo) {
     body: JSON.stringify({ expected: type, events }, null, 2),
     contentType: 'application/json',
   });
+}
+
+export async function holdBestLock(context: BrowserContext, key: string) {
+  const holder = await openStoragePage(context);
+  await holder.evaluate(async (key) => {
+    await new Promise<void>((ready) => {
+      void navigator.locks.request(key, () => new Promise<void>((release) => {
+        Object.assign(window, { releaseBestLock: release });
+        ready();
+      }));
+    });
+  }, key);
+  return holder;
 }

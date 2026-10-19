@@ -1,6 +1,7 @@
 import { SynthMusic } from "./audio";
 import { MissionTracker, type MissionProgress } from "./missions";
 import { calibratedTime, TimingPreference } from "./timing";
+import { bestKey, loadBest, persistBest, readLegacyBest } from "./best";
 
 export type Lane = 0 | 1 | 2 | 3;
 export type Phase = "idle" | "countdown" | "playing" | "paused" | "results";
@@ -77,13 +78,8 @@ function makeNotes(track: Track, difficulty: Difficulty): Note[] {
   return notes;
 }
 
-function readBest(track: Track, difficulty: Difficulty): number {
-  try {
-    const score = Number(localStorage.getItem(`pulse-best:${track.id}:${difficulty}`));
-    return Number.isFinite(score) && score > 0 ? score : 0;
-  } catch {
-    return 0;
-  }
+function readBest(track: Track, difficulty: Difficulty, requireReadable = false): number {
+  return readLegacyBest(bestKey(track.id, difficulty), requireReadable);
 }
 
 function readReducedEffects(): boolean {
@@ -123,6 +119,7 @@ export class RhythmGame {
   private missCursor = 0;
   private starting = false;
   private operation = 0;
+  private runGeneration = 0;
   private lastInput: number[] = [-Infinity, -Infinity, -Infinity, -Infinity];
 
   constructor(options: { audio?: GameAudio; missions?: MissionTracker; timing?: TimingPreference } = {}) {
@@ -137,12 +134,31 @@ export class RhythmGame {
       timingError: this.timing.getError(),
     };
     this.notes = makeNotes(this.snapshot.track, this.snapshot.difficulty);
+    this.refreshBest();
     // Background tabs pause instead of silently dropping the player's combo.
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => {
         if (document.hidden) this.pause();
       });
       window.addEventListener("blur", () => this.pause());
+      window.addEventListener("storage", (event) => {
+        this.missions.handleStorage(event);
+        const { track, difficulty, best } = this.snapshot;
+        let storedBest = 0;
+        try {
+          if (event.storageArea === window.localStorage &&
+            event.key === `pulse-best:${track.id}:${difficulty}`) {
+            storedBest = readBest(track, difficulty);
+          }
+        } catch {
+          // Storage access may be blocked even while receiving an event.
+        }
+        this.update({ best: Math.max(best, storedBest) });
+        if (event.key === bestKey(track.id, difficulty)) this.refreshBest();
+      });
+      // Storage notifications can be delayed; returning to the page reads the
+      // authoritative store without relying on the compatibility mirror.
+      window.addEventListener("focus", () => this.refreshBest());
     }
   }
 
@@ -294,6 +310,7 @@ export class RhythmGame {
   };
 
   private resetRun(track: Track, difficulty: Difficulty, volume = this.snapshot.volume) {
+    this.runGeneration++;
     this.missions.reset();
     this.snapshot = {
       ...initialSnapshot(track, difficulty, volume, this.snapshot.reducedEffects),
@@ -302,6 +319,21 @@ export class RhythmGame {
       timingOffsetMs: this.snapshot.timingOffsetMs,
       timingError: this.snapshot.timingError,
     };
+    this.refreshBest();
+  }
+
+  private refreshBest() {
+    const generation = this.runGeneration;
+    const { track, difficulty } = this.snapshot;
+    void loadBest(bestKey(track.id, difficulty)).then((best) => {
+      if (generation === this.runGeneration) {
+        this.update({ best: Math.max(best, this.snapshot.best) });
+      }
+    }).catch(() => {
+      if (generation === this.runGeneration && this.snapshot.phase === "idle") {
+        this.update({ error: "Your saved personal best could not be read. Existing scores have not been changed." });
+      }
+    });
   }
 
   private accuracy(perfect: number, good: number, misses: number) {
@@ -345,14 +377,25 @@ export class RhythmGame {
   private finish() {
     this.audio.stop();
     this.cancelFrame();
+    const { track, difficulty } = this.snapshot;
     const best = Math.max(this.snapshot.best, this.snapshot.score);
+    const generation = this.runGeneration;
+    // Results and missions must not wait for another tab to release its lock.
+    this.update({ phase: "results", elapsed: this.snapshot.duration, progress: 1, best, error: null });
+    void this.saveBest(track, difficulty, best, generation);
+  }
+
+  private async saveBest(track: Track, difficulty: Difficulty, best: number, generation: number) {
     let error: string | null = null;
     try {
-      localStorage.setItem(`pulse-best:${this.snapshot.track.id}:${this.snapshot.difficulty}`, String(best));
+      best = await persistBest(bestKey(track.id, difficulty), best);
     } catch {
       error = "Your score is shown below, but this browser could not save your personal best.";
     }
-    this.update({ phase: "results", elapsed: this.snapshot.duration, progress: 1, best, error });
+    // A pending save may finish after replay, menu selection, or a new run.
+    if (generation === this.runGeneration && this.snapshot.phase === "results") {
+      this.update({ best: Math.max(best, this.snapshot.best), error });
+    }
   }
 
   private startFrame() {

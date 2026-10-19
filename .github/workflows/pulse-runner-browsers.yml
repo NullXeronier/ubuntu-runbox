@@ -63,7 +63,7 @@ jobs:
           pnpm --filter @workspace/pulse-runner run test:e2e:types
           pnpm --filter @workspace/pulse-runner run test:unit
           node --test scripts/assert-pulse-browser-matrix.test.mjs
-      - name: Run all 32 Chromium and Firefox cases with explicit renderer evidence
+      - name: Run all 72 Chromium and Firefox core and personal-best cases with evidence
         run: bash scripts/run-pulse-browser-matrix-linux.sh
       - name: Retain browser evidence even when setup or assertions fail
         if: ${{ always() }}

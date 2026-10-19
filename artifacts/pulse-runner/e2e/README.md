@@ -64,8 +64,12 @@ personal desktop's default audio server.
 
 The release script accepts no test filters or unsupported-capability skips.
 It uses bundled Chromium and Firefox, starts the game
-from the checkout, and rejects partial reports, retries, skipped cases or
-missing native-audio/renderer/trusted-input evidence. All 32 cases must pass.
+from the checkout, and rejects launch failures, partial reports, retries,
+skipped cases, fatal browser errors, or missing native-audio/renderer/trusted-input
+evidence. All 72 cases must pass: four core journeys and five personal-best
+persistence cases in each of eight projects. The audit requires exact spec/title
+identities, including the damaged-record case, and a clean `browser-errors`
+attachment for every case; an old core-only report cannot certify this matrix.
 Any missing Mesa/WebGL/native-audio capability is still a hard failure.
 
 On a dedicated Ubuntu 24.04 host, install Node 24 and pnpm 10.26.1, then:
@@ -85,6 +89,68 @@ logs for 14 days, including on failure. Runtime logs are under
 the repository must be connected and the actual runner result inspected before
 claiming Firefox verification.
 
+## Personal-best browser support
+
+Personal-best writes require IndexedDB plus the native Web Locks API in a secure
+context (HTTPS or localhost). Web Locks first appeared in Chromium 69+, Firefox
+96+, Safari 15.4+; API availability is not a claim that those versions were
+verified by this Chromium matrix.
+
+All cooperating tabs acquire the same per-score exclusive Web Lock, then perform
+the read/maximum/write in one IndexedDB readwrite transaction. The lock is held
+until transaction completion, not just request success. IndexedDB is authoritative:
+native Web Locks alone cannot prevent stale Chromium localStorage cache reads.
+
+Existing localStorage scores are never deleted. Each save merges the existing
+legacy score, the authoritative score, and the run's best, then updates the
+legacy key as a compatibility mirror. A failed legacy read prevents saving an
+unknown best; a failed mirror write aborts the pending database write. An IDB
+abort after a successful mirror write can leave a higher mirror, which the next
+successful save can import. The menu reads the maximum of both stores on load,
+track/difficulty changes, matching storage notifications, and page focus.
+Async completions are guarded against changing a different run's results.
+
+Older already-open versions must be reloaded to cooperate with the new store.
+They can overwrite the compatibility mirror but cannot lower a best already
+committed to IndexedDB. If either required API is unavailable/rejected, or
+storage cannot be read/written, results and earned session badges remain
+playable with an explicit warning. There is no unlocked/localStorage-only save
+fallback, database deletion, or destructive migration.
+
+The original localStorage-only defect remains reproducible in the installed
+Chromium 138. This **legacy diagnostic**, not the current persistence path,
+isolates that storage boundary without the game, rendering, or a running server:
+
+```sh
+node artifacts/pulse-runner/e2e/diagnose-best-storage.mjs
+```
+
+This diagnostic intentionally exits nonzero when it reproduces the old unsafe
+algorithm; it is not a release validation command. It exercises
+native/virtual clocks and live/suppressed notifications separately, confirms
+the queue ordering, and checks failed saves from a fresh tab after locks drain.
+
+`concurrent-best.spec.ts` holds a real origin lock in a lightweight same-origin
+HTML tab until both finished game runs have queued saves. It checks the queue
+after each finish to prove both score orderings, suppresses best-score storage
+notifications, and checks the final persisted maximum after both writers drain.
+The original ordering cases keep both real game tabs open until saving completes.
+Lifecycle cases also close the first queued writer while it waits (proving only
+its request disappears), or close the lightweight holder without manually
+releasing its lock. Both score orderings must drain the surviving queue. A
+canceled, uncommitted higher score must not be counted as saved. Fresh-reader
+and reload checks require the canonical IndexedDB maximum and compatibility
+mirror to agree. Each game tab must pass renderer and trusted-input checks;
+the surviving writer and reloaded saved best also have renderer evidence.
+Fatal errors collected from all tabs, including closed or crashed tabs,
+remain checked and attached at teardown even if the main game page closes.
+Storage-only helpers never load the app, Three.js, or audio. It also covers
+missing/rejected locks and denied reads without losing results.
+`best-persistence.spec.ts` additionally covers legacy import, authoritative
+reload despite a stale mirror, damaged authoritative records without overwriting
+either store, track/difficulty isolation, and missing, open-denied, or
+write-denied IndexedDB while preserving existing scores.
+
 ## Required matrix
 
 | Project | Viewport | Lane input | Required renderer |
@@ -102,7 +168,14 @@ Firefox's mobile rows use a narrow viewport and native trusted touch;
 `isMobile` is intentionally off because Playwright Firefox does not implement
 mobile layout emulation. These rows do not certify Android Firefox or hardware.
 
-All four journeys run in every project (32 test cases). Nothing is silently
+The dedicated Linux workflow selects `@cross-engine|@best-persistence`: four core
+journeys (32 cases) plus all five cases in `best-persistence.spec.ts` (40 cases).
+Each runs in every project, for **72 required passes**. When adding a personal-best
+case, retain its release tag and update the explicit inventory/evidence in
+`scripts/assert-pulse-browser-matrix.mjs`. The unfiltered `test:e2e` command also
+retains the other storage and concurrent-tab tests; this release matrix does not
+certify those additional cases.
+Nothing is silently
 skipped or downgraded when WebGL fails. Chromium WebGL projects enable
 ANGLE/SwiftShader: this is
 software-backed **real WebGL2**, including Three.js startup, GLSL compilation,
@@ -171,6 +244,31 @@ WebGL support. Audible output and physical latency remain outside these tests.
    the same partial badge state.
 4. **Reduced effects:** OS reduced-motion default, explicit OFF overriding that
    default after reload, and explicit ON persistence without switching renderer.
+5. **Blocked storage (three journeys):** deny the `localStorage` accessor, deny
+   reads and writes, or allow reads but reject writes with a quota error. Check
+   the menu warning (immediate when reads fail, after earning when only writes
+   fail), HUD warning, and results warning. Earn combo/finish badges with trusted
+   input, keep scoring after the failed save, retry with session-only ALREADY
+   EARNED badges, then reload and require zero saved badges and no saved best.
+6. **Damaged quests (two journeys):** invalid JSON and a valid-looking badge
+   mixed with an unknown badge must warn and award nothing, including on reload.
+   A real-input track finish replaces the damaged document with just the
+   genuinely earned badge, clears the warning, and survives the next reload.
+7. **Effects save failure:** reject only effects writes. Menu and paused
+   controls must visibly warn while immediately changing effects; pause still
+   freezes score/combo and resume accepts the next trusted note. Quest saves
+   continue to work. Reload restores the OS effects default, not the failed
+   preference, while retaining the independently saved quest badge.
+8. **Calibration storage failures (seven journeys):** deny timing reads,
+   deny reads and writes, or deny writes with absent/existing saved offsets.
+   Also load malformed JSON, an out-of-range number, and a wrong-type value.
+   Check menu/dialog warnings, applied-versus-saved status, manual adjustment,
+   reset, and reopening. Trusted lane input at +180 ms must score PERFECT
+   after closing the dialog. Reload returns to 0 ms for denied reads or an
+   absent save, the prior offset for a rejected overwrite, or the repaired
+   saved value when writes succeed. Independently earned/saved quests and an
+   effects preference must remain unchanged. These are storage/UI checks,
+   not measurements of physical headphone latency or device-profile switching.
 
 The deterministic journeys use Playwright's virtual clock and make the
 `AudioContext.currentTime` getter follow its virtual `performance.now`.
@@ -185,6 +283,27 @@ native-clock test intentionally leaves the audio clock untouched.
 
 Entrance animations are disabled only in clocked tests so they do not hang on
 frozen frames. Reduced-effects tests also run with normal clocks and normal CSS.
+The separate effects-save-failure journey uses the deterministic clock.
+
+**Multi-tab clock scheduling:** Playwright's `page.clock` is context-wide:
+installing, pausing, or advancing it affects every tab, including background
+canvases. The fixture installs and pauses it once per context, before the first
+game navigation. Startup advances bounded 32 ms steps and foregrounds the page
+before checking visibility, real draw calls, dimensions, and GL health. This
+avoids free-running extra scenes during shader startup without disabling
+visibility/blur behavior, stubbing rAF, reducing scene quality, raising timeouts,
+or substituting compatibility rendering. The native-clock startup journey
+continues to use unmodified audio and animation clocks.
+
+Storage faults are installed before application startup and reinstated on each
+reload in that test's isolated browser context. They throw native `DOMException`
+errors only at the storage boundary; they never inject mission progress, scores,
+or game state. The damaged-data cases seed only invalid documents, never earned
+badges, and do not overwrite repaired data on reload. A read-only native storage
+probe records attempted/denied operations and checks the actual saved strings,
+so an in-memory badge cannot be mistaken for successful persistence. These
+reports are attached as `storage-*` JSON evidence alongside session-only results
+screenshots. The same console/uncaught-error guard applies to all fault cases.
 
 ## Results and debugging
 
@@ -193,9 +312,21 @@ pnpm --filter @workspace/pulse-runner run test:e2e:report
 # Focus on a particular renderer/device without changing the suite:
 pnpm --filter @workspace/pulse-runner run test:e2e --project=mobile-webgl2
 pnpm --filter @workspace/pulse-runner run test:e2e --project=firefox-desktop-webgl2 --project=firefox-mobile-canvas2d
+
+# Repeat BOTH concurrent queue orderings five times on desktop and mobile:
+pnpm --filter @workspace/pulse-runner exec playwright test concurrent-best.spec.ts \
+  --grep 'concurrent saves' --project desktop-webgl2 --project mobile-webgl2 \
+  --repeat-each=5 --retries=0
+
 # Local-only explicit unsupported capability reporting; not release evidence:
 PULSE_E2E_ALLOW_UNSUPPORTED=1 pnpm --filter @workspace/pulse-runner run test:e2e
 ```
+
+Each repeat is an independent required pass, not a retry of a failed case.
+Keep the configured single worker: launching multiple software WebGL browsers
+in parallel would measure GPU/CPU contention rather than save serialization.
+Do not edit the app or documentation during a run against the dev server;
+live reload can invalidate an in-flight game or its pending save.
 
 `generated-artifacts/pulse-runner/` contains the HTML report, machine-readable
 `results.json`, renderer attachments, native-playing/live-quest/result

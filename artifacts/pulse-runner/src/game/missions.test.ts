@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import { MissionTracker, type MissionStorage } from "./missions";
 import { RhythmGame, TRACKS, type Track } from "./engine";
+import { IDBFactory } from "fake-indexeddb";
 
 class MemoryStorage implements MissionStorage {
   values = new Map<string, string>();
@@ -37,11 +38,27 @@ let frameId = 0;
 const originalRaf = globalThis.requestAnimationFrame;
 const originalCancel = globalThis.cancelAnimationFrame;
 const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+const originalIndexedDB = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+let pendingLocks: Map<string, Promise<unknown>>;
 let storage: MemoryStorage;
 
 beforeEach(() => {
+  Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: new IDBFactory() });
   storage = new MemoryStorage();
   Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
+  pendingLocks = new Map();
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { locks: {
+      request(key: string, _options: unknown, callback: () => unknown) {
+        // Acquire asynchronously, with same-key requests serialized.
+        const pending = (pendingLocks.get(key) ?? Promise.resolve()).then(callback);
+        pendingLocks.set(key, pending.catch(() => {}));
+        return pending;
+      },
+    } },
+  });
   now = 1000;
   nextFrame = null;
   mock.method(performance, "now", () => now);
@@ -55,6 +72,10 @@ afterEach(() => {
   globalThis.cancelAnimationFrame = originalCancel;
   if (originalStorage) Object.defineProperty(globalThis, "localStorage", originalStorage);
   else Reflect.deleteProperty(globalThis, "localStorage");
+  if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator);
+  else Reflect.deleteProperty(globalThis, "navigator");
+  if (originalIndexedDB) Object.defineProperty(globalThis, "indexedDB", originalIndexedDB);
+  else Reflect.deleteProperty(globalThis, "indexedDB");
 });
 
 function createRun() {
@@ -78,6 +99,47 @@ test("four missions have the agreed targets and no initial completion", () => {
   assert.deepEqual(tracker.getSnapshot().map((m) => m.target), [1, 20, 40, 100000]);
   assert.ok(tracker.getSnapshot().every((m) => m.current === 0 && !m.completed && !m.completedThisRun));
   assert.equal(storage.writes, 0);
+});
+
+test("stale trackers merge before saving without crediting external badges to this run", () => {
+  const a = new MissionTracker(storage);
+  const b = new MissionTracker(storage);
+  a.advance(stats({ maxCombo: 20 }));
+  b.advance(stats({ finished: true }));
+  assert.deepEqual(new Set(JSON.parse(storage.getItem("pulse-missions")!).completed), new Set(["combo-20", "first-run"]));
+  assert.equal(b.getSnapshot()[1]!.completedThisRun, false);
+  assert.equal(b.getSnapshot()[0]!.completedThisRun, true);
+});
+
+test("racing events repair the saved union without echo writes or false new flags", () => {
+  const a = new MissionTracker(storage);
+  a.advance(stats({ maxCombo: 20 }));
+  const external = JSON.stringify({ version: 1, completed: ["first-run"] });
+  storage.values.set("pulse-missions", external);
+  const event = { key: "pulse-missions", newValue: external, storageArea: storage as unknown as Storage };
+  a.handleStorage(event);
+  assert.equal(a.getSnapshot()[0]!.completed, true);
+  assert.equal(a.getSnapshot()[0]!.completedThisRun, false);
+  assert.equal(a.getSnapshot()[1]!.completedThisRun, true);
+  assert.deepEqual(new Set(JSON.parse(storage.getItem("pulse-missions")!).completed), new Set(["combo-20", "first-run"]));
+  const writes = storage.writes;
+  a.handleStorage(event);
+  assert.equal(storage.writes, writes);
+  a.handleStorage({ ...event, newValue: '{"version":1,"completed":["perfect-40","unknown"]}' });
+  assert.equal(a.getSnapshot()[2]!.completed, false);
+});
+
+test("denied reconciliation writes retain session badges and the saved external badge", () => {
+  const tracker = new MissionTracker(storage);
+  storage.failWrite = true;
+  tracker.advance(stats({ maxCombo: 20 }));
+  const raw = JSON.stringify({ version: 1, completed: ["first-run"] });
+  storage.values.set("pulse-missions", raw);
+  tracker.handleStorage({ key: "pulse-missions", newValue: raw, storageArea: storage as unknown as Storage });
+  assert.equal(tracker.getSnapshot()[0]!.completedThisRun, false);
+  assert.equal(tracker.getSnapshot()[1]!.completed, true);
+  assert.match(tracker.getError()!, /cannot be saved/);
+  assert.equal(storage.getItem("pulse-missions"), raw);
 });
 
 test("thresholds use actual stats, clamp values, and complete each badge once", () => {
@@ -201,6 +263,8 @@ test("finishing through the audio clock awards first-run and retains bests and b
   assert.equal(game.getSnapshot().phase, "results");
   assert.equal(game.getSnapshot().progress, 1);
   assert.equal(game.getSnapshot().missions[0]!.completedThisRun, true);
+  assert.equal(storage.getItem("pulse-best:neon-drift:normal"), null);
+  await Promise.all(pendingLocks.values());
   assert.ok(storage.getItem("pulse-best:neon-drift:normal") !== null);
   game.exit();
   assert.equal(game.getSnapshot().missions[0]!.completed, true);
@@ -209,6 +273,25 @@ test("finishing through the audio clock awards first-run and retains bests and b
   assert.equal(game.getSnapshot().missions[0]!.completed, true);
   const reloaded = new RhythmGame({ audio: new FakeMusic(), missions: new MissionTracker(storage) });
   assert.equal(reloaded.getSnapshot().missions[0]!.completed, true);
+});
+
+test("unavailable locks preserve the saved best and warn without losing session results", async () => {
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
+  const key = "pulse-best:neon-drift:normal";
+  storage.values.set(key, "5000");
+  const { game, step } = createRun();
+  await game.start();
+  const note = game.getNotes()[0]!;
+  step(note.time);
+  game.hit(note.lane);
+  step(game.getSnapshot().duration);
+  await Promise.resolve();
+  assert.equal(storage.getItem(key), "5000");
+  assert.equal(game.getSnapshot().phase, "results");
+  assert.equal(game.getSnapshot().score, 1000);
+  assert.equal(game.getSnapshot().best, 5000);
+  assert.equal(game.getSnapshot().missions[0]!.completedThisRun, true);
+  assert.match(game.getSnapshot().error!, /could not save your personal best/);
 });
 
 test("effects preference persists without altering rhythm settings and reports save failures", () => {
