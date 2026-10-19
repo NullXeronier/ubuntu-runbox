@@ -138,6 +138,89 @@ for (const highFirst of [true, false]) {
   });
 }
 
+for (const closedTab of ['waiting writer', 'lock holder'] as const) {
+  for (const highFirst of [true, false]) {
+    test(`personal best: closing ${closedTab} with ${highFirst ? 'higher' : 'lower'} queued first drains surviving saves`, async ({ page, context }, info) => {
+      const holder = await holdBestLock(context, key);
+      const other = await context.newPage();
+      // Keep the fixture's page alive through teardown: its fatal-error guard
+      // includes errors collected from ALL tabs, even the one we close.
+      for (const target of [other, page]) await delayBestNotifications(target);
+      const survivorScore = highFirst ? 1000 : 3000;
+      let queued = 0;
+      for (const [target, hits] of [[other, highFirst ? 3 : 1], [page, highFirst ? 1 : 3]] as const) {
+        await openClockedGame(target, info);
+        await pressButton(target, info, 'button-difficulty-easy');
+        const run = await RunDriver.start(target, info);
+        for (let i = 0; i < hits; i++) await run.hit(i);
+        await run.finish();
+        await expect(target.getByTestId('text-final-score')).toHaveText(hits === 3 ? '3,000' : '1,000');
+        await assertTrustedLaneInput(target, info);
+        await checkRenderer(target, info, `before-close-${hits}-hits`, true);
+        queued++;
+        await expect.poll(() => holder.evaluate(async (key) =>
+          (await navigator.locks.query()).pending?.filter((lock) => lock.name === key).length, key)).toBe(queued);
+      }
+      const locks = () => page.evaluate(async (key) => {
+        const snapshot = await navigator.locks.query();
+        return {
+          held: (snapshot.held ?? []).filter((lock) => lock.name === key),
+          pending: (snapshot.pending ?? []).filter((lock) => lock.name === key),
+        };
+      }, key);
+      const beforeClose = await locks();
+      expect(beforeClose.held).toHaveLength(1);
+      expect(beforeClose.held[0]!.mode).toBe('exclusive');
+      expect(beforeClose.pending).toHaveLength(2);
+      expect(beforeClose.pending.map((lock) => lock.mode)).toEqual(['exclusive', 'exclusive']);
+      expect(new Set([...beforeClose.held, ...beforeClose.pending].map((lock) => lock.clientId)).size).toBe(3);
+      expect(await holder.evaluate((key) => localStorage.getItem(key), key)).toBeNull();
+      expect(await databaseBest(holder, key)).toBeUndefined();
+
+      if (closedTab === 'waiting writer') {
+        // The FIRST waiter is canceled by native page destruction. The second
+        // must remain queued behind the same holder, without committing early.
+        await other.close();
+        await expect.poll(locks).toEqual({
+          held: beforeClose.held,
+          pending: [beforeClose.pending[1]],
+        });
+        expect(await holder.evaluate((key) => localStorage.getItem(key), key)).toBeNull();
+        expect(await databaseBest(holder, key)).toBeUndefined();
+        await holder.evaluate(() => (window as unknown as { releaseBestLock: () => void }).releaseBestLock());
+      } else {
+        // Do NOT call releaseBestLock: destroying the holder must release the
+        // native lock and unblock both real game writers on its own.
+        await holder.close();
+      }
+      await expect.poll(locks).toEqual({ held: [], pending: [] });
+      const maximum = closedTab === 'waiting writer' ? survivorScore : 3000;
+      // A fresh storage reader avoids mistaking a tab-local mirror cache or a
+      // storage-event repair for a committed maximum after the queue drains.
+      const reader = await openStoragePage(context);
+      expect(await databaseBest(reader, key)).toBe(maximum);
+      expect(await reader.evaluate((key) => localStorage.getItem(key), key)).toBe(String(maximum));
+      await page.clock.runFor(32);
+      await expect(page.getByTestId('text-final-score')).toHaveText(survivorScore.toLocaleString('en-US'));
+      await expect(page.getByTestId('text-results-best')).toHaveText(maximum.toLocaleString('en-US'));
+      for (const target of [page, other]) {
+        if (!target.isClosed()) await expect(target.getByTestId('text-game-error')).toHaveCount(0);
+      }
+      await checkRenderer(page, info, 'surviving-writer-drained', true);
+      await page.reload();
+      await pressButton(page, info, 'button-difficulty-easy');
+      await expect(page.getByTestId('text-best')).toContainText(maximum.toLocaleString('en-US'));
+      expect(await databaseBest(page, key)).toBe(maximum);
+      expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(String(maximum));
+      await expect(page.getByTestId('text-game-error')).toHaveCount(0);
+      await checkRenderer(page, info, 'surviving-writer-reload', true);
+      await reader.close();
+      if (!other.isClosed()) await other.close();
+      if (!holder.isClosed()) await holder.close();
+    });
+  }
+}
+
 for (const mode of ['missing', 'rejected', 'read denied'] as const) {
   test(`personal best: ${mode} safe saving retains session results and the existing best`, async ({ page }, info) => {
     await page.addInitScript(({ key, mode }) => {

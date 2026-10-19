@@ -130,8 +130,16 @@ the queue ordering, and checks failed saves from a fresh tab after locks drain.
 HTML tab until both finished game runs have queued saves. It checks the queue
 after each finish to prove both score orderings, suppresses best-score storage
 notifications, and checks the final persisted maximum after both writers drain.
-Both real game tabs remain open until saving completes. Each must pass renderer
-and trusted-input checks; the reloaded saved best also has renderer evidence.
+The original ordering cases keep both real game tabs open until saving completes.
+Lifecycle cases also close the first queued writer while it waits (proving only
+its request disappears), or close the lightweight holder without manually
+releasing its lock. Both score orderings must drain the surviving queue. A
+canceled, uncommitted higher score must not be counted as saved. Fresh-reader
+and reload checks require the canonical IndexedDB maximum and compatibility
+mirror to agree. Each game tab must pass renderer and trusted-input checks;
+the surviving writer and reloaded saved best also have renderer evidence.
+The fixture's main game page stays alive so fatal errors collected from all
+tabs, including closed tabs, remain checked at teardown.
 Storage-only helpers never load the app, Three.js, or audio. It also covers
 missing/rejected locks and denied reads without losing results.
 `best-persistence.spec.ts` additionally covers legacy import, authoritative
