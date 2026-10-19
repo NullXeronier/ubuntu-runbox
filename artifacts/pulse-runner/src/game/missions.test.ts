@@ -294,6 +294,69 @@ test("unavailable locks preserve the saved best and warn without losing session 
   assert.match(game.getSnapshot().error!, /could not save your personal best/);
 });
 
+for (const fault of ["storage-access", "storage-read", "database-unavailable", "database-open"] as const) {
+  test(`engine handles ${fault} save rejection after real completion`, async () => {
+    const key = "pulse-best:neon-drift:normal";
+    storage.values.set(key, "5000");
+    const { game, step } = createRun();
+    await game.start();
+    const note = game.getNotes()[0]!;
+    step(note.time);
+    game.hit(note.lane);
+    assert.equal(game.getSnapshot().missions[0]!.completed, false);
+    if (fault === "storage-access") {
+      Object.defineProperty(globalThis, "localStorage", {
+        configurable: true, get() { throw new DOMException("Access denied", "SecurityError"); },
+      });
+    } else if (fault === "storage-read") {
+      storage.failRead = true;
+    } else {
+      Object.defineProperty(globalThis, "indexedDB", {
+        configurable: true,
+        value: fault === "database-unavailable" ? undefined : {
+          open() { throw new DOMException("Open denied", "SecurityError"); },
+        },
+      });
+    }
+    step(game.getSnapshot().duration);
+    // Results and the completion badge are immediate, not contingent on saving.
+    assert.equal(game.getSnapshot().phase, "results");
+    assert.equal(game.getSnapshot().missions[0]!.completedThisRun, true);
+    await Promise.all(pendingLocks.values());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(storage.values.get(key), "5000");
+    assert.equal(game.getSnapshot().score, 1000);
+    assert.equal(game.getSnapshot().best, 5000);
+    assert.match(game.getSnapshot().error!, /could not save your personal best/);
+    await game.restart();
+    assert.equal(game.getSnapshot().phase, "countdown");
+    assert.equal(game.getSnapshot().missions[0]!.completedThisRun, false);
+    assert.equal(game.getSnapshot().error, null);
+    game.exit();
+  });
+}
+
+test("a delayed failed save cannot replace a restarted run's state", async () => {
+  const { game, step } = createRun();
+  await game.start();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const request = navigator.locks.request.bind(navigator.locks);
+  mock.method(navigator.locks, "request", (key: string, options: LockOptions, callback: LockGrantedCallback) =>
+    request(key, options, async (lock) => { await gate; return callback(lock); }));
+  step(game.getSnapshot().duration);
+  assert.equal(game.getSnapshot().phase, "results");
+  await game.restart();
+  storage.failRead = true;
+  release();
+  await Promise.all(pendingLocks.values());
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(game.getSnapshot().phase, "countdown");
+  assert.equal(game.getSnapshot().error, null);
+  assert.equal(game.getSnapshot().missions[0]!.completedThisRun, false);
+  game.exit();
+});
+
 test("effects preference persists without altering rhythm settings and reports save failures", () => {
   const { game } = createRun();
   const notes = game.getNotes().map((n) => ({ ...n }));

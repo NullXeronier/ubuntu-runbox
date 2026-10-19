@@ -10,15 +10,23 @@ let values: Map<string, string>;
 let staleReads: boolean;
 let deniedReads: boolean;
 let deniedWrites: boolean;
+let callbackFailures: unknown[];
 
 beforeEach(() => {
   values = new Map();
+  callbackFailures = [];
   staleReads = deniedReads = deniedWrites = false;
   const queues = new Map<string, Promise<unknown>>();
   Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: new IDBFactory() });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: {
     locks: { request(name: string, _options: unknown, callback: () => unknown) {
-      const next = (queues.get(name) ?? Promise.resolve()).then(callback);
+      const next = (queues.get(name) ?? Promise.resolve()).then(async () => {
+        try { return await callback(); }
+        catch (error) {
+          callbackFailures.push(error);
+          throw error;
+        }
+      });
       queues.set(name, next.catch(() => {}));
       return next;
     } },
@@ -40,6 +48,9 @@ afterEach(() => {
     if (descriptor) Object.defineProperty(globalThis, name, descriptor);
     else Reflect.deleteProperty(globalThis, name);
   }
+  // Node's promise adoption does not reproduce Firefox's native Web Lock
+  // reporting. Assert the boundary itself, not just the caller's rejection.
+  assert.deepEqual(callbackFailures, [], "Web Lock callbacks must fulfill even when persistence rejects");
 });
 
 for (const scores of [[3000, 1000], [1000, 3000]]) {
@@ -136,6 +147,47 @@ test("missing IndexedDB or Web Locks does not silently downgrade to a localStora
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
   await assert.rejects(persistBest(key, 6000), /Safe cross-tab/);
   assert.equal(values.get(key), "5000");
+});
+
+for (const fault of ["storage-access", "storage-read", "database-open"] as const) {
+  test(`${fault} denial fulfills the lock callback but rejects the save with the original error`, async () => {
+    await persistBest(key, 5000);
+    const database = indexedDB;
+    const storage = localStorage;
+    const error = new DOMException(`${fault} denied`, "SecurityError");
+    if (fault === "storage-access") {
+      Object.defineProperty(globalThis, "localStorage", {
+        configurable: true, get() { throw error; },
+      });
+    } else if (fault === "storage-read") {
+      Object.defineProperty(globalThis, "localStorage", {
+        configurable: true, value: { getItem() { throw error; } },
+      });
+    } else {
+      Object.defineProperty(globalThis, "indexedDB", {
+        configurable: true, value: { open() { throw error; } },
+      });
+    }
+    await assert.rejects(persistBest(key, 6000), (reason) => reason === error);
+    assert.equal(values.get(key), "5000");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
+    Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: database });
+    staleReads = true;
+    assert.equal(await loadBest(key), 5000);
+    assert.equal(await persistBest(key, 6000), 6000, "a later save can recover");
+  });
+}
+
+test("lock request rejection still reaches the caller without writing", async () => {
+  await persistBest(key, 5000);
+  const error = new DOMException("Lock request denied", "SecurityError");
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: {
+    locks: { request() { return Promise.reject(error); } },
+  } });
+  await assert.rejects(persistBest(key, 6000), (reason) => reason === error);
+  assert.equal(values.get(key), "5000");
+  staleReads = true;
+  assert.equal(await loadBest(key), 5000);
 });
 
 test("invalid candidates never write", async () => {

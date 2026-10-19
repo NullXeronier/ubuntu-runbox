@@ -170,6 +170,32 @@ for (const required of requiredCases.filter((item) => item.quest)) {
   }
 }
 
+for (const [name, mode, attachment, change] of [
+  ['missing access-denial provenance', 'access denied', 'storage-failed-quest-saves',
+    (data) => { data.attempts = []; }],
+  ['missing denied-write attempt', 'writes denied', 'storage-failed-quest-saves',
+    (data) => { data.attempts = data.attempts.filter((a) => a.operation !== 'set'); }],
+  ['successful write during denial', 'reads and writes denied', 'storage-failed-quest-saves',
+    (data) => { data.attempts.find((a) => a.operation === 'set').denied = false; }],
+  ['premature repair before completion', undefined, 'storage-damaged-quests',
+    (data) => { data.attempts.push({ operation: 'set', key: 'pulse-missions', denied: false }); }],
+  ['repair awarding an unearned badge', undefined, 'storage-repaired-quests',
+    (data) => { data.quests = '{"version":1,"completed":["first-run","combo-20"]}'; }],
+  ['repair lost on reload', undefined, 'storage-repaired-quests-reload',
+    (data) => { data.quests = '{"version":1,"completed":[]}'; }],
+]) {
+  test(`rejects quest evidence with ${name}`, () => {
+    const report = completeReport();
+    const required = requiredCases.find((item) => item.quest && item.quest.mode === mode);
+    const result = specs(report).find((s) => s.title === required.title).tests[0].results[0];
+    const a = result.attachments.find((a) => a.name === attachment);
+    const data = JSON.parse(Buffer.from(a.body, 'base64').toString());
+    change(data);
+    Object.assign(a, jsonAttachment(a.name, data));
+    assert.throws(() => assertBrowserMatrix(report));
+  });
+}
+
 for (const required of requiredCases) {
   test(`rejects omission of ${required.title} in one Firefox touch project`, () => {
     const report = completeReport();

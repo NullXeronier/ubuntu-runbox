@@ -1,7 +1,68 @@
 # Browser regression verification — 2026-10-19
 
+## Quest storage faults added to the Linux release matrix
 
-## Expanded release scope: core journeys and personal-best persistence
+The required release matrix is now **112 cases**: four core journeys, five
+existing personal-best persistence cases, and five `@quest-storage` cases in
+each Chromium/Firefox desktop/touch and WebGL2/Canvas2D project. Safari/WebKit,
+tap calibration, and additional personal-best damaged-record work are excluded
+from this change. No production gameplay or save behavior was modified.
+
+[Ubuntu 24.04 verification run](https://github.com/NullXeronier/ubuntu-runbox/actions/runs/39235951867)
+tested snapshot `a22dd038a226577890d5f63cac68279231465b22` on 2026-10-19.
+It used Playwright 1.64.0, Chromium 156.0.8078.4, and Firefox 157.0.
+The full browser run completed in 9.8 minutes: **96 passed, 16 failed, zero
+skips or retries**. This is not a passing release certification.
+
+### Quest results (40 cases)
+
+| Engine / configurations | Access denied | Reads/writes denied | Writes denied | Invalid JSON | Unknown + known badge |
+| --- | --- | --- | --- | --- | --- |
+| Chromium: desktop/touch × WebGL2/Canvas2D | 4 PASS | 4 PASS | 4 PASS | 4 PASS | 4 PASS |
+| Firefox: desktop/touch × WebGL2/Canvas2D | 4 FAIL (fatal errors) | 4 FAIL (fatal errors) | 4 PASS | 4 PASS | 4 PASS |
+
+- All 40 quest test bodies completed their storage, UI, trusted-input, renderer,
+  and reload assertions. **32/40 passed the entire test**, including the
+  fatal-error guard; eight Firefox cases failed in that guard.
+- Denied cases earned badges through real lane input and completion, displayed
+  session-only warnings, continued scoring after failed writes, retained badges
+  as ALREADY EARNED on retry, and lost unsaved badges on reload. A non-canonical
+  empty quest document was preserved byte-for-byte before/after failed saves,
+  retry, and reload. No pre-earned badge was seeded.
+- Both malformed-data variants awarded no badge at load/reload. The original
+  bytes survived an incomplete run with no quest writes; a real track completion
+  saved only First Contact, cleared the warning, and survived reload.
+- The eight failed Firefox quest cases emitted `SecurityError: Browser storage
+  access denied` or `SecurityError: Browser storage read denied`, on both the
+  initial finish and retry. Stacks identify `readLegacyBest` → `persistBest`
+  (Web Lock callback) → `saveBest`/`finish`, not a proven tooling-only source.
+  No errors were suppressed or reclassified.
+- The other eight failures are the previously observed Firefox IndexedDB
+  unavailable/open-denied personal-best cases. Existing core journeys and all
+  other existing persistence cases passed.
+
+The evidence gate requires exact case identities in all eight projects, readable
+quest storage/input/renderer/capability payloads, and clean fatal-error evidence.
+It rejects the downloaded run, as required. Synthetic tests also reject the old
+72-case report, omitted quest cases, skips/retries, missing/ambiguous/malformed
+payloads, changed original bytes, premature repair, unearned repaired badges,
+missing denial provenance, wrong renderers, untrusted input, and fatal errors.
+All **139 evidence-gate unit tests** pass locally (the CI snapshot ran the
+then-current 133 tests; six additional negative audit tests were added afterward).
+Both game/harness typechecks and the game unit suite passed in CI. The managed
+app preview also starts and renders cleanly.
+
+Full JSON/HTML reports, failure traces/screenshots, and Linux audio/graphics logs
+are retained on the linked run for 14 days. Downloaded evidence is under
+`generated-artifacts/quest-verification/evidence/`, ignored by Git and deployment.
+The next release blocker is Firefox's uncaught storage-save failure propagation;
+fix that separately without weakening the warnings, data-preservation assertions,
+or fatal-error guard, then rerun the unchanged full release matrix.
+
+The older sections below are historical evidence for narrower matrices.
+
+
+## Previous release scope: core journeys and personal-best persistence
 
 The required release matrix is now **72 cases**: the four `@cross-engine`
 journeys plus all five `@best-persistence` cases in each of the eight

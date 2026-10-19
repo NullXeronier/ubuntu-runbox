@@ -182,9 +182,10 @@ Firefox's mobile rows use a narrow viewport and native trusted touch;
 `isMobile` is intentionally off because Playwright Firefox does not implement
 mobile layout emulation. These rows do not certify Android Firefox or hardware.
 
-The dedicated Linux workflow selects `@cross-engine|@best-persistence`: four core
-journeys (32 cases) plus all five cases in `best-persistence.spec.ts` (40 cases).
-Each runs in every project, for **72 required passes**. When adding a personal-best
+The dedicated Linux workflow selects `@cross-engine|@best-persistence|@quest-storage`:
+four core journeys (32 cases), five cases in `best-persistence.spec.ts` (40 cases),
+and five quest faults in `journey.spec.ts` (40 cases).
+Each runs in every project, for **112 required passes**. When adding a release
 case, retain its release tag and update the explicit inventory/evidence in
 `scripts/assert-pulse-browser-matrix.mjs`. The unfiltered `test:e2e` command also
 retains the other storage and concurrent-tab tests; this release matrix does not

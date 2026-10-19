@@ -79,35 +79,48 @@ export async function loadBest(key: string): Promise<number> {
 export async function persistBest(key: string, candidate: number): Promise<number> {
   if (!Number.isFinite(candidate) || candidate < 0) throw new Error("Invalid personal best");
   if (!navigator.locks?.request) throw new Error("Safe cross-tab saving is unavailable");
-  return navigator.locks.request(key, { mode: "exclusive" }, async () => {
-    // Preserve unreadable legacy data, even when IndexedDB is accessible.
-    const legacy = readLegacyBest(key, true);
-    const db = await openDatabase();
+  // Firefox can report a rejected LockGrantedCallback promise as uncaught even
+  // when the request's rejection is handled by saveBest. Fulfill the native
+  // callback with an outcome, then reject on the caller-owned promise instead.
+  const outcome = await navigator.locks.request(key, { mode: "exclusive" }, async () => {
     try {
-      return await new Promise<number>((resolve, reject) => {
-        const transaction = db.transaction(STORE, "readwrite");
-        const store = transaction.objectStore(STORE);
-        const request = store.get(key);
-        let best = 0;
-        let failure: unknown;
-        request.onsuccess = () => {
-          try {
-            best = Math.max(candidate, legacy, storedScore(request.result));
-            store.put(best, key);
-            // Throwing here aborts the pending IDB write too. A later IDB abort
-            // may leave this mirror higher, but never destroys the old best.
-            localStorage.setItem(key, String(best));
-          } catch (error) {
-            failure = error;
-            transaction.abort();
-          }
-        };
-        // Keep the Web Lock until COMMIT, not merely until put() succeeds.
-        transaction.oncomplete = () => resolve(best);
-        transaction.onabort = () => reject(failure ?? transaction.error ?? new Error("Personal-best save aborted"));
-      });
-    } finally {
-      db.close();
+      return { ok: true as const, best: await persistLockedBest(key, candidate) };
+    } catch (error) {
+      return { ok: false as const, error };
     }
   });
+  if (!outcome.ok) throw outcome.error;
+  return outcome.best;
+}
+
+async function persistLockedBest(key: string, candidate: number): Promise<number> {
+  // Preserve unreadable legacy data, even when IndexedDB is accessible.
+  const legacy = readLegacyBest(key, true);
+  const db = await openDatabase();
+  try {
+    return await new Promise<number>((resolve, reject) => {
+      const transaction = db.transaction(STORE, "readwrite");
+      const store = transaction.objectStore(STORE);
+      const request = store.get(key);
+      let best = 0;
+      let failure: unknown;
+      request.onsuccess = () => {
+        try {
+          best = Math.max(candidate, legacy, storedScore(request.result));
+          store.put(best, key);
+          // Throwing here aborts the pending IDB write too. A later IDB abort
+          // may leave this mirror higher, but never destroys the old best.
+          localStorage.setItem(key, String(best));
+        } catch (error) {
+          failure = error;
+          transaction.abort();
+        }
+      };
+      // Keep the Web Lock until COMMIT, not merely until put() succeeds.
+      transaction.oncomplete = () => resolve(best);
+      transaction.onabort = () => reject(failure ?? transaction.error ?? new Error("Personal-best save aborted"));
+    });
+  } finally {
+    db.close();
+  }
 }
