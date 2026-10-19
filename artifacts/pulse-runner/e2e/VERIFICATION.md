@@ -3,6 +3,28 @@
 
 ## Current scope: Chromium and Firefox; Safari/WebKit excluded
 
+**Verified: 32/32 passed in 4.1 minutes, zero failures, skips or retries.**
+
+- [Successful Ubuntu 24.04 run](https://github.com/NullXeronier/ubuntu-runbox/actions/runs/38536828494)
+- Tested source: `79f2db2`; Playwright 1.64.0; Chromium 156.0.8078.4 and Firefox 157.0.
+- Eight projects cover desktop keyboard and narrow-viewport trusted touch,
+  each with actual WebGL2 and injected-context-denial Canvas2D rendering.
+- All four journeys passed per project: untouched native-clock startup,
+  complete quest/badge lifecycle, pause/reset persistence, and effects settings.
+- Native capability attachments show running, advancing audio clocks and
+  available WebGL2 with no context loss or GL errors. Renderer attachments
+  confirm real draw calls rather than silently substituted projections.
+- Both typechecks, 14 game unit tests and nine report-audit tests passed.
+- The 32-case evidence gate passed on the runner and against the downloaded
+  report at `generated-artifacts/linux-verified/pulse-runner-linux-38536828494-1/pulse-runner/results.json`.
+- Reports, screenshots and runtime logs are attached to the linked GitHub run
+  (14-day retention); downloaded evidence is intentionally ignored by Git.
+
+This verifies browser-engine behavior under software-backed graphics and a
+native PulseAudio null sink, not physical GPU drivers, audible output or
+headphone latency. Firefox touch uses a narrow desktop context, not Android
+layout emulation. Safari/WebKit is not certified or included in the matrix.
+
 The user explicitly excluded Safari/WebKit. The required release matrix now
 contains 32 cases in eight Chromium/Firefox projects. The initial Ubuntu run
 was cancelled during WebKit execution after the scope change, not counted as a
@@ -10,12 +32,15 @@ passing release. Its completed Chromium/Firefox cases had 31 passes and one
 test-harness failure: a 100 ms `clock.pauseAt` target expired before the protocol
 command arrived. All native-clock startup and full quest/badge journeys passed.
 The harness now uses a full test-timeout virtual-time margin before any run
-starts; a new 32-case run is required to certify the revised suite.
+starts; the successful run above verifies that revised suite.
 
 GitHub token authentication successfully uploaded the test branch and started
 the Ubuntu workflow. The earlier connection blocker is resolved.
 
 ## Historical investigation (before scope change)
+
+The notes below describe superseded local setup attempts and the original
+three-engine scope. The verified result and scope above are authoritative.
 
 ### Linux runner follow-up
 
@@ -203,3 +228,6 @@ passed. No production gameplay code was changed.
 ---
 
 ## Historical investigation (before scope change)
+
+The notes below describe superseded local setup attempts and the original
+three-engine scope. The verified result and scope above are authoritative.
