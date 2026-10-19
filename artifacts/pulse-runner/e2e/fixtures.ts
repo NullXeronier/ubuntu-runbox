@@ -1,5 +1,5 @@
-import { test as base, expect, type Page, type TestInfo } from '@playwright/test';
 import { checkCapabilities } from './capabilities';
+import { test as base, expect, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
 
 type DrawRecord = {
   kind: string;
@@ -168,6 +168,17 @@ export const test = base.extend<{ guard: void }>({
 
 export { expect };
 
+/** Same-origin storage/lock access without loading another animated game. */
+export async function openStoragePage(context: BrowserContext) {
+  const page = await context.newPage();
+  await page.route('**/*', (route) => route.fulfill({
+    contentType: 'text/html', body: '<!doctype html><title>Storage test helper</title>',
+  }));
+  await page.goto('./');
+  await expect(page.locator('canvas, script')).toHaveCount(0);
+  return page;
+}
+
 /** Model a delayed storage notification without changing native stored data. */
 export async function delayBestNotifications(page: Page) {
   await page.addInitScript(() => {
@@ -187,6 +198,10 @@ export async function pressButton(page: Page, info: TestInfo, id: string) {
 }
 
 export async function checkRenderer(page: Page, info: TestInfo, label: string, clocked = false) {
+  // Native rAF and canvas sizing can be deferred in background tabs. Do not
+  // disable browser throttling or the game's real visibility/blur handlers.
+  await page.bringToFront();
+  await expect.poll(() => page.evaluate(() => document.visibilityState)).toBe('visible');
   const expected = info.project.metadata.renderer as string;
   await expect.poll(async () => {
     // A reload reinstalls the init scripts, but Playwright's paused clock stays
@@ -239,6 +254,8 @@ export async function checkRenderer(page: Page, info: TestInfo, label: string, c
   });
 }
 
+const clockedContexts = new WeakSet<BrowserContext>();
+
 /**
  * Native Web Audio is still created/resumed and the real SynthMusic, engine,
  * beatmap, DOM handlers, scoring, and storage run. Only its clock getter follows
@@ -247,10 +264,17 @@ export async function checkRenderer(page: Page, info: TestInfo, label: string, c
  * The separate startup test uses the untouched native audio clock.
  */
 export async function openClockedGame(page: Page, info: TestInfo) {
-  // Each cross-tab tracker needs a visible page while its renderer is proven:
-  // Chromium throttles requestAnimationFrame in background tabs.
   await page.bringToFront();
-  await page.clock.install();
+  const context = page.context();
+  // page.clock controls the ENTIRE context, not just this page. Install and
+  // pause once, before any game loads, so background games never free-run while
+  // another compiles shaders. Subsequent tabs inherit this same paused clock;
+  // reinstalling would reset wall time in the existing tabs as well.
+  if (!clockedContexts.has(context)) {
+    await context.clock.install();
+    await context.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
+    clockedContexts.add(context);
+  }
   await page.addInitScript(() => {
     const descriptor = Object.getOwnPropertyDescriptor(AudioContext.prototype, 'currentTime') ??
       Object.getOwnPropertyDescriptor(BaseAudioContext.prototype, 'currentTime');
@@ -270,16 +294,11 @@ export async function openClockedGame(page: Page, info: TestInfo) {
   });
   await page.goto('./');
   await expect(page.getByTestId('button-start')).toBeVisible();
-  // A prior page in the same context may already have paused its virtual clock.
-  // Advance this page while confirming the first real renderer frame.
+  // Advance the shared clock in bounded steps to prove real renderer frames.
   await checkRenderer(page, info, 'startup', true);
   // Animation scheduling is not the feature under test. Keep UI stable while
   // time is paused without changing the game's reduced-effects preference.
   await page.addStyleTag({ content: '*,*::before,*::after{animation:none!important;transition:none!important}' });
-  // pauseAt jumps immediately; this is virtual time, not a real-time wait.
-  // Use the full test-timeout margin so a slow CI protocol round-trip cannot
-  // turn the sampled target into a timestamp in the past. No run has started.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000));
 }
 
 export async function assertTrustedLaneInput(page: Page, info: TestInfo) {
@@ -292,4 +311,17 @@ export async function assertTrustedLaneInput(page: Page, info: TestInfo) {
     body: JSON.stringify({ expected: type, events }, null, 2),
     contentType: 'application/json',
   });
+}
+
+export async function holdBestLock(context: BrowserContext, key: string) {
+  const holder = await openStoragePage(context);
+  await holder.evaluate(async (key) => {
+    await new Promise<void>((ready) => {
+      void navigator.locks.request(key, () => new Promise<void>((release) => {
+        Object.assign(window, { releaseBestLock: release });
+        ready();
+      }));
+    });
+  }, key);
+  return holder;
 }

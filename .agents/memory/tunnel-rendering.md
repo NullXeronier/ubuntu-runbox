@@ -40,3 +40,16 @@ subsequent successful repository read did not imply a push would authenticate.
 fails. Do not infer successful uploads or runs from a connection confirmation,
 and do not copy credentials into files or environment overrides to work around
 the integration.
+
+Playwright's clock is browser-context-wide even when accessed through a page.
+Background tabs share clock advancement; foregrounding one does not isolate its
+render work from the other canvases.
+
+**Why:** Confirmed in the installed Playwright 1.64 implementation while
+investigating multi-tab SwiftShader startup stalls. A storage-only lock holder
+that loads the whole app adds unnecessary render work to every clock step.
+
+**How to apply:** Keep clock ownership at context scope, use lightweight
+same-origin documents for storage-only helpers, and keep actual game tabs alive
+until their pending saves settle. Closing or navigating a writer to reduce load
+would abort the very concurrency the test must exercise.

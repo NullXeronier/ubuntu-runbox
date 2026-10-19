@@ -87,18 +87,56 @@ claiming Firefox verification.
 
 ## Personal-best browser support
 
-Personal-best writes require the native Web Locks API in a secure context
-(HTTPS or localhost): Chromium 69+, Firefox 96+, Safari 15.4+. All tabs running
-this version serialize the entire read/compare/write under the same per-score
-exclusive lock. Older already-open app versions must be reloaded to cooperate.
-If locks are unavailable/rejected, or storage cannot be read/written, results
-and earned session badges remain playable and the existing save warning appears.
-There is intentionally no unlocked persistence fallback.
+Personal-best writes require IndexedDB plus the native Web Locks API in a secure
+context (HTTPS or localhost). Web Locks first appeared in Chromium 69+, Firefox
+96+, Safari 15.4+; API availability is not a claim that those versions were
+verified by this Chromium matrix.
 
-`concurrent-best.spec.ts` holds a real origin lock in a third tab until both
-finished runs have queued saves, tests both score orderings with storage events
-suppressed, and checks the final persisted maximum after both writers drain.
-It also covers missing/rejected locks and denied reads without losing results.
+All cooperating tabs acquire the same per-score exclusive Web Lock, then perform
+the read/maximum/write in one IndexedDB readwrite transaction. The lock is held
+until transaction completion, not just request success. IndexedDB is authoritative:
+native Web Locks alone cannot prevent stale Chromium localStorage cache reads.
+
+Existing localStorage scores are never deleted. Each save merges the existing
+legacy score, the authoritative score, and the run's best, then updates the
+legacy key as a compatibility mirror. A failed legacy read prevents saving an
+unknown best; a failed mirror write aborts the pending database write. An IDB
+abort after a successful mirror write can leave a higher mirror, which the next
+successful save can import. The menu reads the maximum of both stores on load,
+track/difficulty changes, matching storage notifications, and page focus.
+Async completions are guarded against changing a different run's results.
+
+Older already-open versions must be reloaded to cooperate with the new store.
+They can overwrite the compatibility mirror but cannot lower a best already
+committed to IndexedDB. If either required API is unavailable/rejected, or
+storage cannot be read/written, results and earned session badges remain
+playable with an explicit warning. There is no unlocked/localStorage-only save
+fallback, database deletion, or destructive migration.
+
+The original localStorage-only defect remains reproducible in the installed
+Chromium 138. This **legacy diagnostic**, not the current persistence path,
+isolates that storage boundary without the game, rendering, or a running server:
+
+```sh
+node artifacts/pulse-runner/e2e/diagnose-best-storage.mjs
+```
+
+This diagnostic intentionally exits nonzero when it reproduces the old unsafe
+algorithm; it is not a release validation command. It exercises
+native/virtual clocks and live/suppressed notifications separately, confirms
+the queue ordering, and checks failed saves from a fresh tab after locks drain.
+
+`concurrent-best.spec.ts` holds a real origin lock in a lightweight same-origin
+HTML tab until both finished game runs have queued saves. It checks the queue
+after each finish to prove both score orderings, suppresses best-score storage
+notifications, and checks the final persisted maximum after both writers drain.
+Both real game tabs remain open until saving completes. Each must pass renderer
+and trusted-input checks; the reloaded saved best also has renderer evidence.
+Storage-only helpers never load the app, Three.js, or audio. It also covers
+missing/rejected locks and denied reads without losing results.
+`best-persistence.spec.ts` additionally covers legacy import, authoritative
+reload despite a stale mirror, track/difficulty isolation, and missing,
+open-denied, or write-denied IndexedDB while preserving existing scores.
 
 ## Required matrix
 
@@ -231,6 +269,16 @@ Entrance animations are disabled only in clocked tests so they do not hang on
 frozen frames. Reduced-effects tests also run with normal clocks and normal CSS.
 The separate effects-save-failure journey uses the deterministic clock.
 
+**Multi-tab clock scheduling:** Playwright's `page.clock` is context-wide:
+installing, pausing, or advancing it affects every tab, including background
+canvases. The fixture installs and pauses it once per context, before the first
+game navigation. Startup advances bounded 32 ms steps and foregrounds the page
+before checking visibility, real draw calls, dimensions, and GL health. This
+avoids free-running extra scenes during shader startup without disabling
+visibility/blur behavior, stubbing rAF, reducing scene quality, raising timeouts,
+or substituting compatibility rendering. The native-clock startup journey
+continues to use unmodified audio and animation clocks.
+
 Storage faults are installed before application startup and reinstated on each
 reload in that test's isolated browser context. They throw native `DOMException`
 errors only at the storage boundary; they never inject mission progress, scores,
@@ -248,9 +296,21 @@ pnpm --filter @workspace/pulse-runner run test:e2e:report
 # Focus on a particular renderer/device without changing the suite:
 pnpm --filter @workspace/pulse-runner run test:e2e --project=mobile-webgl2
 pnpm --filter @workspace/pulse-runner run test:e2e --project=firefox-desktop-webgl2 --project=firefox-mobile-canvas2d
+
+# Repeat BOTH concurrent queue orderings five times on desktop and mobile:
+pnpm --filter @workspace/pulse-runner exec playwright test concurrent-best.spec.ts \
+  --grep 'concurrent saves' --project desktop-webgl2 --project mobile-webgl2 \
+  --repeat-each=5 --retries=0
+
 # Local-only explicit unsupported capability reporting; not release evidence:
 PULSE_E2E_ALLOW_UNSUPPORTED=1 pnpm --filter @workspace/pulse-runner run test:e2e
 ```
+
+Each repeat is an independent required pass, not a retry of a failed case.
+Keep the configured single worker: launching multiple software WebGL browsers
+in parallel would measure GPU/CPU contention rather than save serialization.
+Do not edit the app or documentation during a run against the dev server;
+live reload can invalidate an in-flight game or its pending save.
 
 `generated-artifacts/pulse-runner/` contains the HTML report, machine-readable
 `results.json`, renderer attachments, native-playing/live-quest/result

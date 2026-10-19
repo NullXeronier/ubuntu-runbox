@@ -2,5 +2,5 @@
 - [Preview discovery dependencies](preview-discovery.md) — prefer native file discovery for the fixed preview scan; do not reintroduce an unpatched glob-parser dependency.
 - [Calibration limits](calibration-limits.md) — tap-derived offsets are comfort estimates, not hardware-latency measurements; software checks cannot verify Bluetooth output.
 - [Storage fault testing](storage-fault-testing.md) — injected denial messages are not grounds to ignore uncaught errors; retain provenance before classifying tooling noise.
-- [Personal-best storage safety](personal-best-storage.md) — do not replace an unknown saved best when storage reads are blocked but writes are allowed.
+- [Personal-best storage safety](personal-best-storage.md) — preserve unreadable bests; Web Locks alone can still expose stale localStorage reads across Chromium tabs.
 - [Browser verification scope](browser-verification-scope.md) — user explicitly excludes Safari/WebKit from the requested browser checks.

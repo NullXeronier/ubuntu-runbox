@@ -1,25 +1,16 @@
-import { test, expect, openClockedGame, pressButton, delayBestNotifications } from './fixtures';
+import {
+  test, expect, openClockedGame, pressButton, delayBestNotifications,
+  holdBestLock, openStoragePage, checkRenderer, assertTrustedLaneInput,
+} from './fixtures';
 import { RunDriver } from './driver';
+import { databaseBest } from './best-database';
 
 const key = 'pulse-best:neon-drift:easy';
 
 for (const navigation of ['replay', 'change difficulty'] as const) {
   for (const outcome of ['release', 'reject'] as const) {
     test(`personal best: delayed ${outcome} after ${navigation} cannot affect the next run`, async ({ page, context }, info) => {
-      const holder = await context.newPage();
-      // The lock holder needs the same origin, not a second animated game.
-      await holder.route('**/*', (route) => route.fulfill({
-        contentType: 'text/html', body: '<!doctype html><title>Best-save lock holder</title>',
-      }));
-      await holder.goto('./');
-      await holder.evaluate(async (key) => {
-        await new Promise<void>((ready) => {
-          void navigator.locks.request(key, () => new Promise<void>((release) => {
-            Object.assign(window, { releaseBestLock: release });
-            ready();
-          }));
-        });
-      }, key);
+      const holder = await holdBestLock(context, key);
 
       // Keep the real Web Lock queue and reject only the old run's storage
       // write, once the lock grants it. No engine state or input is mocked.
@@ -78,6 +69,7 @@ for (const navigation of ['replay', 'change difficulty'] as const) {
       await page.clock.runFor(32);
       expect(await holder.evaluate((key) => localStorage.getItem(key), key))
         .toBe(outcome === 'release' ? '2000' : null);
+      expect(await databaseBest(holder, key)).toBe(outcome === 'release' ? 2000 : undefined);
       await expect(page.getByText(`Neon Drift / ${difficulty}`, { exact: true })).toBeVisible();
       if (navigation === 'replay') {
         await expect(page.getByTestId('panel-results')).toHaveCount(0);
@@ -103,20 +95,12 @@ for (const navigation of ['replay', 'change difficulty'] as const) {
 
 for (const highFirst of [true, false]) {
   test(`personal best: concurrent saves serialize with ${highFirst ? 'higher' : 'lower'} queued first`, async ({ page, context }, info) => {
-    // A third tab holds the real origin lock. Both real runs must finish and
-    // queue their saves before it releases; no timing/scheduling luck required.
-    const holder = await context.newPage();
-    await holder.goto('./');
-    await holder.evaluate(async (key) => {
-      await new Promise<void>((ready) => {
-        void navigator.locks.request(key, () => new Promise<void>((release) => {
-          Object.assign(window, { releaseBestLock: release });
-          ready();
-        }));
-      });
-    }, key);
+    // A lightweight third tab holds the real origin lock. Both game tabs stay
+    // alive with pending saves; only the non-playing holder omits the renderer.
+    const holder = await holdBestLock(context, key);
     const other = await context.newPage();
     for (const target of [page, other]) await delayBestNotifications(target);
+    let queued = 0;
     for (const [target, hits] of [[page, highFirst ? 3 : 1], [other, highFirst ? 1 : 3]] as const) {
       await openClockedGame(target, info);
       await pressButton(target, info, 'button-difficulty-easy');
@@ -124,6 +108,13 @@ for (const highFirst of [true, false]) {
       for (let i = 0; i < hits; i++) await run.hit(i);
       await run.finish();
       await expect(target.getByTestId('text-final-score')).toHaveText(hits === 3 ? '3,000' : '1,000');
+      await assertTrustedLaneInput(target, info);
+      await checkRenderer(target, info, `queued-${hits}-hits`, true);
+      // Prove the requested ordering, not just the final queue length. Saves
+      // cannot finish while the holder owns the exclusive native Web Lock.
+      queued++;
+      await expect.poll(() => holder.evaluate(async (key) =>
+        (await navigator.locks.query()).pending?.filter((lock) => lock.name === key).length, key)).toBe(queued);
     }
     await expect.poll(() => holder.evaluate(async (key) =>
       (await navigator.locks.query()).pending?.filter((lock) => lock.name === key).length, key)).toBe(2);
@@ -136,10 +127,12 @@ for (const highFirst of [true, false]) {
     }, key)).toBe(0);
     // Check after BOTH writers have finished, not just the higher writer.
     expect(await holder.evaluate((key) => localStorage.getItem(key), key)).toBe('3000');
+    expect(await databaseBest(holder, key)).toBe(3000);
     await page.bringToFront();
     await page.reload();
     await pressButton(page, info, 'button-difficulty-easy');
     await expect(page.getByTestId('text-best')).toContainText('3,000');
+    await checkRenderer(page, info, 'saved-best-reload', true);
     await other.close();
     await holder.close();
   });
@@ -172,8 +165,7 @@ for (const mode of ['missing', 'rejected', 'read denied'] as const) {
     await expect(page.getByTestId('text-game-error')).toHaveText(
       'Your score is shown below, but this browser could not save your personal best.');
     // A clean tab can read storage even when the game tab's reads are denied.
-    const reader = await page.context().newPage();
-    await reader.goto('./');
+    const reader = await openStoragePage(page.context());
     expect(await reader.evaluate((key) => localStorage.getItem(key), key)).toBe('5000');
     await reader.close();
   });

@@ -23,7 +23,7 @@ A responsive browser rhythm game: race through a Three.js tunnel, hit four lanes
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
 - Game: React + Vite, Three.js with React Three Fiber, Web Audio
-- Personal bests: browser localStorage, separated by track and difficulty
+- Personal bests: atomic browser IndexedDB transactions under per-score Web Locks, with preserved localStorage scores/compatibility mirrors, separated by track and difficulty
 - The shared API and database packages are scaffolded but are not used by the game.
 - API: Express 5
 - DB: PostgreSQL + Drizzle ORM

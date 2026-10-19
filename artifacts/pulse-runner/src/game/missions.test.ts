@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import { MissionTracker, type MissionStorage } from "./missions";
 import { RhythmGame, TRACKS, type Track } from "./engine";
+import { IDBFactory } from "fake-indexeddb";
 
 class MemoryStorage implements MissionStorage {
   values = new Map<string, string>();
@@ -38,10 +39,12 @@ const originalRaf = globalThis.requestAnimationFrame;
 const originalCancel = globalThis.cancelAnimationFrame;
 const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
 const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+const originalIndexedDB = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
 let pendingLocks: Map<string, Promise<unknown>>;
 let storage: MemoryStorage;
 
 beforeEach(() => {
+  Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: new IDBFactory() });
   storage = new MemoryStorage();
   Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
   pendingLocks = new Map();
@@ -71,6 +74,8 @@ afterEach(() => {
   else Reflect.deleteProperty(globalThis, "localStorage");
   if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator);
   else Reflect.deleteProperty(globalThis, "navigator");
+  if (originalIndexedDB) Object.defineProperty(globalThis, "indexedDB", originalIndexedDB);
+  else Reflect.deleteProperty(globalThis, "indexedDB");
 });
 
 function createRun() {

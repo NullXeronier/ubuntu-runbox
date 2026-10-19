@@ -167,6 +167,59 @@ renderer evidence, and session-only results screenshots are in the ignored
 available traces/screenshots are retained separately in
 `generated-artifacts/pulse-runner-storage-initial-matrix/`.
 
+
+## Concurrent WebGL startup investigation — 2026-10-19 — initial failed evidence
+
+The test-only scheduling changes remove the unnecessary animated lock-holder
+and storage-reader tabs. Both actual score-writing games remain alive, render
+normally, and finish through trusted lane input. The shared Playwright clock is
+installed and paused once per browser context before game navigation. Renderer
+checks foreground their page and verify visibility as well as the existing
+draw-call, dimensions, WebGL version, context-loss, and GL-error assertions.
+Queue length is now checked after each run to prove the requested queue order;
+renderer checks also cover each queued result and the saved-best reload.
+No production gameplay/persistence code, launch flags, retry counts, timeouts,
+or fatal browser-error assertions were changed.
+
+A preliminary baseline sample completed the first two desktop concurrent-save
+cases in 28.3 and 31.2 seconds before that diagnostic run was stopped. The
+updated five-repeat desktop/mobile WebGL run completed **18/20**, generally
+around 7–10 seconds per successful case. Renderer startup passed, but one case
+lost the higher saved score (`1000` instead of `3000`), and another navigated
+unexpectedly back to the menu during countdown. The navigation coincided with
+documentation edits during the live dev-server run; its exact cause was not
+proven. This is not a passing stress result.
+
+An additional ten-repeat desktop higher-first diagnostic run with temporary,
+read-only storage-operation logging passed **10/10**. That instrumentation was
+removed, and this diagnostic pass is **not** used to dismiss the failing save.
+
+## Concurrent WebGL startup investigation — 2026-10-19 — initial failed evidence
+
+The test-only scheduling changes remove the unnecessary animated lock-holder
+and storage-reader tabs. Both actual score-writing games remain alive, render
+normally, and finish through trusted lane input. The shared Playwright clock is
+installed and paused once per browser context before game navigation. Renderer
+checks foreground their page and verify visibility as well as the existing
+draw-call, dimensions, WebGL version, context-loss, and GL-error assertions.
+Queue length is now checked after each run to prove the requested queue order;
+renderer checks also cover each queued result and the saved-best reload.
+No production gameplay/persistence code, launch flags, retry counts, timeouts,
+or fatal browser-error assertions were changed.
+
+A preliminary baseline sample completed the first two desktop concurrent-save
+cases in 28.3 and 31.2 seconds before that diagnostic run was stopped. The
+updated five-repeat desktop/mobile WebGL run completed **18/20**, generally
+around 7–10 seconds per successful case. Renderer startup passed, but one case
+lost the higher saved score (`1000` instead of `3000`), and another navigated
+unexpectedly back to the menu during countdown. The navigation coincided with
+documentation edits during the live dev-server run; its exact cause was not
+proven. This is not a passing stress result.
+
+An additional ten-repeat desktop higher-first diagnostic run with temporary,
+read-only storage-operation logging passed **10/10**. That instrumentation was
+removed, and this diagnostic pass is **not** used to dismiss the failing save.
+
 ### Firefox/WebKit are not certified by this run
 
 Playwright 1.64.0's version-matched Firefox 157.0/revision 1555 and WebKit
@@ -241,3 +294,105 @@ passed. No production gameplay code was changed.
 
 The notes below describe superseded local setup attempts and the original
 three-engine scope. The verified result and scope above are authoritative.
+
+### Independently reproduced storage-coherence blocker
+
+`diagnose-best-storage.mjs` uses three empty same-origin pages, real exclusive
+Web Locks, and unmodified native localStorage. Both writers queue behind a
+holder in a confirmed order. The higher writer reads/compares/writes `3000`
+inside its lock; the lower writer then reads/compares/writes inside its lock.
+No engine, renderer, audio, injected scores, or storage implementation is used.
+
+With Nix-wrapped Chromium **138.0.7204.100**, all four diagnostic modes reproduced
+a stale second read and actual loss of the maximum:
+
+| Clock | Notifications | First failure iteration | Reads inside locks | Fresh-tab saved value |
+| --- | --- | --- | --- | --- |
+| Native | Live | 90 | `null`, `null` | `1000` |
+| Native | Suppressed | 2 | `null`, `null` | `1000` |
+| Virtual/paused | Live | 10 | `null`, `null` | `1000` |
+| Virtual/paused | Suppressed | 8 | `null`, `null` | `1000` |
+
+All matching locks had drained before the fresh-tab read. This independently
+shows that the lost maximum is not caused by WebGL load, virtual clocks, or
+suppression of the app's storage-event notifications. Making the test pass by
+sleeping between writers, reseeding the maximum, or relaxing the final-value
+assertion would hide a real persistence defect.
+
+**Acceptance criterion blocked at this stage:** repeated concurrent-save runs could not honestly
+be called reliable until score persistence provided coherent cross-tab reads
+and writes, while preserving existing saved bests. This requires production
+persistence work beyond the original renderer/test-fixture scope. The user
+subsequently approved that scope expansion; the results below supersede this
+initial investigation, not the retained evidence of the old algorithm's defect.
+
+Other checks passed: browser-harness typecheck, game typecheck, all 18 configured
+unit tests, and normal preview rendering (compatibility renderer). The complete
+browser matrix was not rerun after discovering the independent storage blocker.
+Evidence is in ignored `generated-artifacts/pulse-runner-investigation/`:
+`first-stress.json`, `first-stress-results/` (failure traces/screenshots), and
+`native-storage.json`. The standalone diagnostic remains committed so a clean
+workspace can reproduce the blocker without those generated files.
+
+
+## Atomic persistence and repeated WebGL verification — 2026-10-19 — PASS
+
+After the user approved the persistence scope expansion, score saving now uses
+an authoritative IndexedDB read/maximum/write transaction under the original
+per-score Web Lock, held until commit. Existing localStorage values are retained
+and merged as compatibility mirrors. No legacy bests are deleted. Menu/reload
+reads consult both stores, and old async completions are generation-guarded.
+Missing APIs, denied reads/writes, and database failures remain explicit errors,
+not an unlocked or localStorage-only fallback.
+
+The complete Chromium matrix then passed in one uninterrupted run:
+
+```sh
+pnpm --filter @workspace/pulse-runner exec playwright test --retries=0 --max-failures=4
+```
+
+| Configuration | Passed | Skipped | Failed / flaky | Retries |
+| --- | --- | --- | --- | --- |
+| Desktop WebGL2 | 35 | 0 | 0 | 0 |
+| Desktop Canvas2D | 35 | 0 | 0 | 0 |
+| Mobile WebGL2 | 35 | 0 | 0 | 0 |
+| Mobile Canvas2D | 35 | 0 | 0 | 0 |
+| **Total** | **140** | **0** | **0** | **0** |
+
+Duration: **534.1 seconds**. This includes the native-clock startup checks, all
+existing score/quest/calibration/storage-fault journeys, delayed-save release
+and rejection after replay/difficulty changes, and the new legacy-import,
+stale-mirror reload, track/difficulty isolation, and IndexedDB failure checks.
+All 140 fatal browser-error reports were empty. Actual WebGL2 draw calls, a
+non-lost context, zero GL error, and the required renderer were verified.
+
+Immediately afterward, both concurrent queue orderings were repeated five times
+on each WebGL viewport:
+
+```sh
+pnpm --filter @workspace/pulse-runner exec playwright test concurrent-best.spec.ts \
+  --grep 'concurrent saves' --project desktop-webgl2 --project mobile-webgl2 \
+  --repeat-each=5 --retries=0
+```
+
+**20/20 passed** in **162.9 seconds** (10 desktop, 10 mobile), with zero skips,
+failures, flaky outcomes, retries, or browser errors. Both real games remained
+alive until both writers drained. Each queued result and the reloaded menu had
+renderer evidence; native IndexedDB and the compatibility mirror both retained
+the maximum. No score seeding, storage delay, renderer fallback, reduced scene,
+timeout increase, or weakened assertion was used to make this run pass.
+
+Also passed: **28 unit tests**, game typecheck, browser-harness typecheck, and
+normal managed-workflow startup. The preview screenshot rendered correctly
+through the compatibility path; the independent Playwright reports establish
+the WebGL2 evidence. No Safari/Firefox or physical GPU/audio claims are made.
+
+Final generated reports (ignored by Git/deployment):
+- `generated-artifacts/pulse-runner-full-atomic/`: complete 140-case JSON/HTML
+  reports, renderer evidence, and screenshots.
+- `generated-artifacts/pulse-runner/`: final 20-case repeat JSON/HTML reports
+  and renderer/error attachments.
+
+The retained legacy-only diagnostic still demonstrates why the former algorithm
+was unsafe; its intentionally failing result is not a failure of the current
+transactional persistence implementation.
